@@ -119,7 +119,7 @@ class HomeOverride : AccessibilityService() {
     private class HomeCapture(val pkg: String, var recents: Boolean)
     private var pendingHome: HomeCapture? = null
     private val finishCapture = Runnable { pendingHome?.let(::finishHome) }
-    private val watch by lazy { HomeWatch(fireTv(this)) { homes } }
+    private val watch by lazy { HomeWatch(fireTv(this), packageName) { homes } }
     private var homes = emptyMap<String, Set<String>>()
     private var listening = false
     private val packageReceiver = object : BroadcastReceiver() {

@@ -3,8 +3,6 @@ package dev.plume
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaPlayer
-import android.view.SurfaceHolder
-import android.view.SurfaceView
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -13,22 +11,29 @@ import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 
-/** Videos stay in Plume's wallpaper folder; no player runs after the home screen stops. */
-internal class VideoWallpaper(private val surface: SurfaceView, private val onFrame: () -> Unit, private val onError: () -> Unit) : SurfaceHolder.Callback {
+/**
+ * Videos stay in Plume's wallpaper folder; no player runs after the home screen stops.
+ *
+ * The player draws into [LiquidVideo], which keeps the last frame when the player stops. The next player picks up at
+ * the same moment, so coming back to the home screen shows no jump.
+ */
+internal class VideoWallpaper(
+    private val liquid: LiquidVideo,
+    private val onFrame: () -> Unit,
+    private val onError: () -> Unit,
+) {
     private var player: MediaPlayer? = null
     private var file: File? = null
     private var active = false
-    private var ready = false
     private var rendered = false // the player has shown a frame of the current file
-
-    init { surface.holder.addCallback(this) }
+    private var position = 0 // where the last player of this file stopped, in ms
 
     fun show(file: File, play: Boolean) {
-        if (this.file != file) { release(); this.file = file }
+        if (this.file != file) { release(); this.file = file; position = 0 }
         else if (play && rendered) onFrame() // same video, already on screen: the caller covered it with the picture again
         active = play
-        surface.visibility = android.view.View.VISIBLE
-        if (ready && active) start()
+        liquid.view.visibility = android.view.View.VISIBLE
+        if (active) start()
     }
 
     fun pause() {
@@ -38,32 +43,34 @@ internal class VideoWallpaper(private val surface: SurfaceView, private val onFr
 
     fun resume() {
         active = true
-        if (ready) start()
+        start()
     }
 
     fun clear() {
         pause()
         file = null
-        surface.visibility = android.view.View.GONE
+        position = 0
+        liquid.view.visibility = android.view.View.GONE
     }
-
-    override fun surfaceCreated(holder: SurfaceHolder) { ready = true; if (active) start() }
-    override fun surfaceDestroyed(holder: SurfaceHolder) { ready = false; release() }
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     private fun start() {
         val target = file?.takeIf { it.isFile } ?: return onError()
         if (player != null) return
         try {
             player = MediaPlayer().also { p ->
-                p.setOnPreparedListener { it.isLooping = true; it.setVolume(0f, 0f); it.start() }
+                p.setOnPreparedListener {
+                    it.isLooping = true
+                    it.setVolume(0f, 0f)
+                    if (position in 1 until it.duration) it.seekTo(position.toLong(), MediaPlayer.SEEK_CLOSEST)
+                    it.start()
+                }
                 p.setOnInfoListener { _, what, _ ->
                     if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) { rendered = true; onFrame() }
                     false
                 }
                 p.setOnErrorListener { _, _, _ -> release(); onError(); true }
                 p.setDataSource(target.path)
-                p.setDisplay(surface.holder)
+                p.setSurface(liquid.input)
                 p.prepareAsync()
             }
         } catch (_: Exception) {
@@ -72,7 +79,14 @@ internal class VideoWallpaper(private val surface: SurfaceView, private val onFr
         }
     }
 
-    private fun release() { player?.release(); player = null; rendered = false }
+    private fun release() {
+        player?.let { p ->
+            if (rendered) position = runCatching { p.currentPosition }.getOrDefault(0)
+            p.release()
+        }
+        player = null
+        rendered = false
+    }
 }
 
 /** Reject mislabeled files and videos outside the TV wallpaper size limit. */

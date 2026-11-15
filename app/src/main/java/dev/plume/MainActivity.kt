@@ -96,7 +96,6 @@ import android.widget.TextView
 import android.widget.TextClock
 import android.widget.Toast
 import android.widget.VideoView
-import android.view.SurfaceView
 import java.io.File
 import java.lang.ref.WeakReference
 import java.io.IOException
@@ -369,6 +368,7 @@ class MainActivity : Activity() {
     private lateinit var wifi: ImageView
     private lateinit var glass: GlassLayer // paints the blurred wallpaper under glass tiles
     private lateinit var videoWallpaper: VideoWallpaper
+    private lateinit var liquid: LiquidVideo
 
     private var resumed = false
     private var ready = false // false while the user is still locked: no prefs, files or cache yet
@@ -431,9 +431,11 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
         glass = GlassLayer(this)
         findViewById<ViewGroup>(R.id.root).addView(glass, 3, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        videoWallpaper = VideoWallpaper(findViewById<SurfaceView>(R.id.videoWallpaper),
-            { findViewById<ImageView>(R.id.wallpaper).alpha = 0f },
-            { findViewById<ImageView>(R.id.wallpaper).alpha = 1f; if (resumed) toast(getString(R.string.video_cannot_play), long = true) })
+        liquid = LiquidVideo(findViewById(R.id.videoWallpaper))
+        glass.liquid = liquid
+        videoWallpaper = VideoWallpaper(liquid,
+            { revealVideo() },
+            { showStill(); if (resumed) toast(getString(R.string.video_cannot_play), long = true) })
         for (id in intArrayOf(R.id.appScroll, R.id.watchScroll, R.id.allApps)) findViewById<View>(id).setOnScrollChangeListener { _, _, _, _, _ -> glass.kick(150) }
         appRow = findViewById(R.id.appRow)
         watchRow = findViewById(R.id.watchRow)
@@ -545,6 +547,7 @@ class MainActivity : Activity() {
         resumed = true
         val recentAppsRequested = intent.getBooleanExtra(Remap.OPEN_RECENT_APPS, false)
         val allAppsRequested = intent.getBooleanExtra(Remap.OPEN_ALL_APPS, false) || recentAppsRequested
+        ui.removeCallbacks(stopVideo) // a Home press on the home screen pauses and resumes at once: keep the video playing
         if (currentWallpaper().startsWith("video:")) videoWallpaper.resume()
         returnTo = null // back by another way than Home: the next Home starts again at the first tile
         openedFrom?.get()?.let { tile -> ui.post { if (tile.isAttachedToWindow) settleRow(tile) } }
@@ -615,8 +618,10 @@ class MainActivity : Activity() {
     override fun onPause() {
         if (ready) {
             resumed = false
-            videoWallpaper.pause()
-            findViewById<ImageView>(R.id.wallpaper).alpha = 1f
+            // Not at once: Home on the home screen comes as a new intent, which pauses and resumes the activity within
+            // ~100 ms. Stopping the player there showed the still and restarted the video on every press.
+            ui.removeCallbacks(stopVideo)
+            ui.postDelayed(stopVideo, VIDEO_STOP_DELAY)
             ui.removeCallbacks(refreshIfDirty)
             ui.removeCallbacks(weatherTick)
             ui.removeCallbacks(themeTick)
@@ -631,6 +636,8 @@ class MainActivity : Activity() {
         if (ready) {
             if (upload != null) closeLauncherSettings()
             hidden = true
+            ui.removeCallbacks(stopVideo)
+            stopVideo.run()
             unlockedUntil = 0L // leaving the home screen locks it again (onPause would also fire for permission dialogs)
             Remap.learn = null // never keep swallowing keys for a page that's no longer on screen
             if (homeTest != 0) leftDuringTest = true
@@ -647,6 +654,8 @@ class MainActivity : Activity() {
         unregisterReceiver(unlockReceiver)
         if (ready) {
             videoWallpaper.clear()
+            glass.liquid = null
+            liquid.release()
             if (Bing.onChanged === bingChanged) Bing.onChanged = null
             unregisterReceiver(packageReceiver)
             applicationContext.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(net)
@@ -1293,8 +1302,8 @@ class MainActivity : Activity() {
     private fun glassStyle() = GlassStyle.of(prefs.getString("glass_style", null), prefs.getBoolean("glass", true))
 
     /**
-     * The style, the theme and what is behind the home screen: all that glass depends on. A video is never captured
-     * to blur (that fails on TVs that play video on a hardware overlay, and redrawing costs frames): it gets a tint.
+     * The style, the theme and what is behind the home screen: all that glass depends on. Over a video the tiles get
+     * live glass from [LiquidVideo]; the panels keep a blur of the video's still.
      */
     private fun glassLook() = GlassLook(glassStyle(), dark, Backdrop.of(currentWallpaper()), prefs.getInt("glass_hue", GLASS_GREY),
         coloured = prefs.getString("theme", null) == "wallpaper")
@@ -1360,6 +1369,8 @@ class MainActivity : Activity() {
         glass.grain = look.active?.grain == true
         glass.edge = look.active?.edge ?: 0
         glass.shade = look.active?.shade ?: 0
+        glass.live = look.live
+        liquid.setTint(look.liveTint())
         if (look.active != GlassStyle.CLEAR) sharpPixels = null // 2 MB, kept only for Clear
         if (was != null && was.first == look && was.second === px) return
         glassShown = look to px
@@ -1446,7 +1457,7 @@ class MainActivity : Activity() {
         val choice = currentWallpaper()
         val video = choice.startsWith("video:")
         val load = ++wallpaperLoad
-        view.alpha = 1f
+        showStill()
         if (!video) videoWallpaper.clear()
         if (choice.startsWith("plain:")) { // the root's ground colour shows through
             photoWallpaper.clear()
@@ -1546,6 +1557,26 @@ class MainActivity : Activity() {
     }
 
     private var wallpaperLoad = 0
+
+    /** Stops the video wallpaper. Runs a moment after onPause, at once in onStop. */
+    private val stopVideo = Runnable {
+        if (ready) videoWallpaper.pause() // the video view keeps its last frame; the next player goes on from there
+    }
+
+    /** The still picture over the video wallpaper, at once (any fade to the video stops). */
+    private fun showStill() {
+        findViewById<ImageView>(R.id.wallpaper).apply { animate().cancel(); alpha = 1f }
+    }
+
+    /** The video has its first frame on screen: the still fades out, so the change from picture to video is soft. */
+    private fun revealVideo() {
+        findViewById<ImageView>(R.id.wallpaper).apply {
+            animate().cancel()
+            if (alpha == 0f) return
+            if (!animationsOn()) { alpha = 0f; return }
+            animate().alpha(0f).setDuration(VIDEO_REVEAL_MS).setInterpolator(DECELERATE).start()
+        }
+    }
     private var folderPending = false
     private var folderRetries = 0
 
@@ -1964,14 +1995,20 @@ class MainActivity : Activity() {
     private fun previewWallpaper(choice: String, back: (() -> Unit)? = null) {
         wallPreview = choice
         previewBack = back
-        settingsScrim.animate().alpha(0f).setDuration(220).setInterpolator(DECELERATE).start()
+        settingsScrim.animate().alpha(0f).setDuration(220).setInterpolator(DECELERATE).setUpdateListener(panelFade).start()
         toast(getString(R.string.wp_preview_hint))
+    }
+
+    // A fading panel cannot cut a hole for its live glass: it shows as frosted until it is fully back.
+    private val panelFade = android.animation.ValueAnimator.AnimatorUpdateListener {
+        glass.invalidate()
+        findViewById<View>(R.id.settingsPanel).invalidate()
     }
 
     private fun endWallPreview() {
         val choice = wallPreview ?: return
         wallPreview = null
-        settingsScrim.animate().alpha(1f).setDuration(220).setInterpolator(DECELERATE).start()
+        settingsScrim.animate().alpha(1f).setDuration(220).setInterpolator(DECELERATE).setUpdateListener(panelFade).start()
         previewBack?.invoke() ?: pickWallpaper(dark, choice)
         previewBack = null
     }
@@ -2055,9 +2092,27 @@ class MainActivity : Activity() {
                 else downloadVideo(forDark, item, file, back)
             }
         }
-        val initialIndex = rows.indexOfFirst { it.first == (focusOn ?: wallpaperName(current)) }.coerceAtLeast(0)
+        val key = "video:$title"
+        val initialIndex = rows.indexOfFirst { it.first == (focusOn ?: sceneFocus[key] ?: wallpaperName(current)) }.coerceAtLeast(0)
         showPage(title, rows, initialIndex) {
             onBack()
+        }
+        rememberFocus(key, rows)
+    }
+
+    /** The last scene focused in each scene list, so leaving a category and coming back lands on the same scene. */
+    private val sceneFocus = HashMap<String, String>()
+
+    /** Records under [key] each row of the page just shown as it gets focus. Call right after showPage. */
+    private fun rememberFocus(key: String, rows: List<Triple<String, String, () -> Unit>>) {
+        val first = settingsList.childCount - rows.size
+        rows.forEachIndexed { i, row ->
+            val v = settingsList.getChildAt(first + i) ?: return@forEachIndexed
+            val old = v.onFocusChangeListener
+            v.setOnFocusChangeListener { view, has ->
+                old?.onFocusChange(view, has)
+                if (has) sceneFocus[key] = row.first
+            }
         }
     }
 
@@ -2104,8 +2159,8 @@ class MainActivity : Activity() {
     }
 
     private fun previewVideo(forDark: Boolean, file: File, back: () -> Unit) {
-        videoWallpaper.pause()
-        findViewById<ImageView>(R.id.wallpaper).alpha = 1f
+        ui.removeCallbacks(stopVideo)
+        stopVideo.run()
         val preview = VideoView(this).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(182)).apply {
                 setMargins(dp(14), dp(4), dp(14), dp(14))
@@ -2123,6 +2178,9 @@ class MainActivity : Activity() {
         showPage(wallpaperName("video:${file.name}"), listOf(
             page(getString(R.string.use_video)) {
                 preview.stopPlayback()
+                // The page's exit would resume the wallpaper player, which still holds the old video until the new
+                // one's poster has loaded: the old video flashed up before the new one. loadWallpaper starts the new one.
+                pageExit = null
                 setWallpaper(forDark, "video:${file.name}")
                 back()
             },
@@ -2728,7 +2786,12 @@ class MainActivity : Activity() {
             panel.background = null
             panel.setWillNotDraw(false)
             styleGlass(panel.glass, dp(22).toFloat(), flatRight = true)
+            // Over a video the panel is clear glass like the tiles, drawn with the video under the home screen.
+            panel.glass.live = { glass.panelLive(panel) }
+            glass.setPanel(panel, dp(22).toFloat())
         } else {
+            panel.glass.live = null
+            glass.setPanel(null, 0f)
             panel.setWillNotDraw(true)
             panel.background = if (!dark) ColorDrawable(0xFFF7F8FA.toInt())
                 else LayerDrawable(arrayOf(ColorDrawable(DARK_BG), ColorDrawable(PANEL_EDGE))).apply {
@@ -2749,6 +2812,7 @@ class MainActivity : Activity() {
         pageExit = null
         pageBack = null
         settingsScrim.visibility = View.GONE
+        glass.setPanel(null, 0f)
         homeFocusable(allApps.visibility != View.VISIBLE) // the PIN can open over All apps
         (panelFrom?.takeIf { it.isAttachedToWindow } ?: findViewById(R.id.launcherSettings)).requestFocus()
         panelFrom = null
@@ -5325,9 +5389,11 @@ class MainActivity : Activity() {
     }
 
     /** One kind of Apple scene for the screensaver: OK downloads a scene, or offers to remove one that is on the TV. */
-    private fun pickAerialKind(kind: String, scenes: List<VideoScene>, focus: Int = 0, back: () -> Unit) {
+    private fun pickAerialKind(kind: String, scenes: List<VideoScene>, focus: Int? = null, back: () -> Unit) {
         val dir = wallpaperDir() ?: return
-        showPage(kind, scenes.mapIndexed { i, scene ->
+        val key = "aerial:$kind"
+        val at = focus ?: scenes.indexOfFirst { it.name == sceneFocus[key] }.coerceAtLeast(0)
+        val rows = scenes.mapIndexed { i, scene ->
             val file = File(dir, scene.file)
             val value = when {
                 aerialDownload == scene.file -> getString(R.string.downloading)
@@ -5338,7 +5404,9 @@ class MainActivity : Activity() {
                 if (file.isFile) removeAerialScene(scene, file) { pickAerialKind(kind, scenes, i, back) }
                 else downloadAerialScene(scene, file) { pickAerialKind(kind, scenes, i, back) }
             }
-        }, focus, crumb = getString(R.string.aerial_views)) { back() }
+        }
+        showPage(kind, rows, at, crumb = getString(R.string.aerial_views)) { back() }
+        rememberFocus(key, rows)
     }
 
     private fun removeAerialScene(scene: VideoScene, file: File, back: () -> Unit) {
@@ -5516,10 +5584,11 @@ class MainActivity : Activity() {
 
     private fun myVersion() = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
 
-    /** The newer version a check found, if any (null again once it's installed). */
-    private fun availableUpdate() = prefs.getString("upd_ver", null)?.takeIf { newerVersion(it, myVersion()) }
+    /** The newer version a check found, if any (null again once it's installed). Never in the custom build. */
+    private fun availableUpdate() = prefs.getString("upd_ver", null)?.takeIf { UPDATES && newerVersion(it, myVersion()) }
 
     private fun checkUpdate(force: Boolean) {
+        if (!UPDATES) return
         if (checking || !force && System.currentTimeMillis() - prefs.getLong("upd_time", 0) < 24 * 3600_000L) return
         checking = true
         if (force) renderSettings(R.string.updates)
@@ -5613,9 +5682,9 @@ class MainActivity : Activity() {
         prefs.edit().putString("seen_notes", myVersion()).apply()
         updateBadge()
         val ver = availableUpdate()
-        showPage(getString(R.string.whats_new_title, myVersion()), listOf(
+        showPage(getString(R.string.whats_new_title, myVersion()), listOfNotNull(
             if (ver != null) page(getString(R.string.install_update, ver)) { installUpdate(ver) }
-            else page(getString(R.string.check_updates)) { checkUpdate(force = true) },
+            else if (UPDATES) page(getString(R.string.check_updates)) { checkUpdate(force = true) } else null,
         ), back = { renderSettings(R.string.updates) })
         // Focusable, lit on focus, so Down walks through notes longer than the panel and it scrolls along.
         getString(R.string.whats_new).split('\n').forEach {
@@ -6922,6 +6991,11 @@ class MainActivity : Activity() {
         )
         const val CHOSEN = "✓"
         const val REPO = "aradhyas8/Plume_Launcher"
+        /** Off in the custom build: the official Plume.apk is signed with another key and cannot replace it. */
+        const val UPDATES = false
+        /** How long the video wallpaper keeps playing after onPause; see onPause. */
+        const val VIDEO_STOP_DELAY = 500L
+        const val VIDEO_REVEAL_MS = 300L
         const val UPDATE_STATUS = "dev.plume.UPDATE_STATUS"
         const val WRITE_EPG ="com.android.providers.tv.permission.WRITE_EPG_DATA"
         const val TV_SETTINGS = "com.android.tv.settings"

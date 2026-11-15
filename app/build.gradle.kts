@@ -10,7 +10,9 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.plume"
+        // Custom build: its own ID so it installs next to the official Plume, which is signed with another key.
+        applicationId = "dev.plume.custom"
+        manifestPlaceholders["appLabel"] = "Plume Custom"
         minSdk = 26
         targetSdk = 36
         versionCode = 10
@@ -66,6 +68,11 @@ android {
     }
 
     buildTypes {
+        // Debug builds install as a third app next to the official and the custom one, so they can be tested with run-as.
+        debug {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["appLabel"] = "Plume Debug"
+        }
         release {
             vcsInfo.include = false
             isMinifyEnabled = true

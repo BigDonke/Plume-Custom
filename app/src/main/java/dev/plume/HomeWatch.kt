@@ -18,7 +18,11 @@ fun stockHomes(found: List<HomeEntry>): Map<String, Set<String>> =
  * [homes] gives each stock launcher's home screens (see [stockHomes]). With no Google TV list, its windows
  * all count except the dashboard. Kept free of Android classes so it can be tested off the TV.
  */
-class HomeWatch(private val fire: Boolean, private val homes: () -> Map<String, Set<String>>) {
+class HomeWatch(
+    private val fire: Boolean,
+    private val self: String = PLUME,
+    private val homes: () -> Map<String, Set<String>>,
+) {
     private var settingsMayFollow = false
     private var lastJump = -JUMP_GAP_MS
     private var waitingPkg: String? = null
@@ -37,12 +41,12 @@ class HomeWatch(private val fire: Boolean, private val homes: () -> Map<String, 
     fun opened(pkg: String, cls: String?, now: Long): Long? {
         // System UI events do not show that the user left Home; a different launcher screen does.
         if (waitingPkg != null && ((pkg == waitingPkg && isHome(pkg, cls)) ||
-                pkg == PLUME || pkg == "android" || pkg == "com.android.systemui")) return KEEP
+                pkg == self || pkg == "android" || pkg == "com.android.systemui")) return KEEP
         waitingPkg = null
         if (!isHome(pkg, cls)) {
-            if (pkg != PLUME) launchedAt = -LAUNCH_WAIT_MS // what Plume started is on screen
+            if (pkg != self) launchedAt = -LAUNCH_WAIT_MS // what Plume started is on screen
             // Fire OS shows its home on the way into (and out of) Amazon Settings, then Settings on top.
-            settingsMayFollow = pkg == PLUME || pkg.startsWith(AMAZON_SETTINGS)
+            settingsMayFollow = pkg == self || pkg.startsWith(AMAZON_SETTINGS)
             return null
         }
         if (now - lastJump < JUMP_GAP_MS) return KEEP // one Home press sends several of these

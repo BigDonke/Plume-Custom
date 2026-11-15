@@ -230,4 +230,17 @@ class GlassTest {
             assertEquals("$look active", expected, look.active)
         }
     }
+
+    @Test fun liveGlassNeedsAVideoAndGlassOn() {
+        assertTrue(GlassLook(GlassStyle.FROSTED, true, Backdrop.VIDEO).live)
+        assertTrue(GlassLook(GlassStyle.CLEAR, true, Backdrop.VIDEO).live)
+        assertTrue(!GlassLook(GlassStyle.FROSTED, true, Backdrop.PICTURE).live)
+        assertTrue(!GlassLook(null, true, Backdrop.VIDEO).live)
+    }
+
+    @Test fun liveTilesAreClearAtRestAndLitOnFocus() {
+        val look = GlassLook(GlassStyle.FROSTED, true, Backdrop.VIDEO)
+        assertEquals(0, look.tile(lit = false))
+        assertEquals(LIVE_LIT, look.tile(lit = true))
+    }
 }

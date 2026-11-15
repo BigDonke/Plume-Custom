@@ -100,6 +100,15 @@ internal fun glassHue(hue: Int, dark: Boolean, alpha: Int): Int {
     return (alpha shl 24) or (c[0] shl 16) or (c[1] shl 8) or c[2]
 }
 
+/** A focused tile on live glass: the glass itself is clear, so focus adds a light white fill. */
+internal const val LIVE_LIT = 0x26FFFFFF
+
+/** How much of [GlassLook.liveTint] covers the video under live glass: little, as the glass is clear. */
+internal const val LIVE_TINT = 0.12f
+
+/** The same for the settings panel: more, so its text stays readable over a bright video. */
+internal const val LIVE_PANEL_TINT = 0.45f
+
 /** How much brighter a focused tile's rim is than its rim at rest ([GlassStyle.edge]). */
 internal const val EDGE_LIT = 0x40
 
@@ -176,7 +185,19 @@ internal fun vivid(hue: Int, dark: Boolean): Int {
  * for off); [hue] is the wallpaper's mean colour, which tints the glass. [coloured] (the Wallpaper theme): the panels
  * and the settings' accents take that colour, [vivid]; tiles keep the thin tint.
  */
-internal data class GlassLook(val style: GlassStyle?, val dark: Boolean, val backdrop: Backdrop, val hue: Int = GLASS_GREY, val coloured: Boolean = false) {
+internal data class GlassLook(
+    val style: GlassStyle?,
+    val dark: Boolean,
+    val backdrop: Backdrop,
+    val hue: Int = GLASS_GREY,
+    val coloured: Boolean = false,
+) {
+    /** Over a video, with glass on, [LiquidVideo] draws the tiles' glass from the moving video, in either style. */
+    val live: Boolean get() = backdrop == Backdrop.VIDEO && active != null
+
+    /** The colour live glass is tinted with, lightly: Plume's glass colour. */
+    fun liveTint(): Int = glassHue(hue, dark, 0xFF)
+
     /**
      * The style that shows: none on a plain background, which has nothing behind it. Clear needs a still picture: a
      * video moves, so the sharp still under a tile would not match it; there it is Frosted, whose heavy blur of the
@@ -191,7 +212,7 @@ internal data class GlassLook(val style: GlassStyle?, val dark: Boolean, val bac
     val lens: Float get() = active?.lens ?: 1f
 
     /** A tile's tint, at rest or [lit]: 0 with glass off. */
-    fun tile(lit: Boolean): Int = active?.let {
+    fun tile(lit: Boolean): Int = if (live) (if (lit) LIVE_LIT else 0) else active?.let {
         // Dark tint makes a focused tile darker, not brighter: on Clear and in the Wallpaper theme focus keeps the rest
         // tint and shows by its light (sheen, rim, glint) and lift instead.
         val more = lit && !(dark && (coloured || it == GlassStyle.CLEAR))
@@ -337,7 +358,8 @@ internal fun grainShader(): BitmapShader {
 /**
  * Sits between the wallpaper and the home screen and paints the blurred wallpaper under each glass tile, at the
  * tile's own place, so the tile's see-through colour sits over frosted glass. One shader and a few rounded
- * rectangles: no library, no live blur, nothing for the GPU to redo on each frame.
+ * rectangles: no library, no live blur, nothing for the GPU to redo on each frame. Over a video ([live]) it paints
+ * no glass and sends the tiles' places to [liquid], which draws the glass with the video.
  */
 internal class GlassLayer(context: Context) : View(context) {
     private class Tile(val view: WeakReference<View>, val radius: Float) {
@@ -483,6 +505,30 @@ internal class GlassLayer(context: Context) : View(context) {
             if (field != v) invalidate()
             field = v
         }
+    /** Draws live glass over a video; [live] says whether the tiles use it. */
+    var liquid: LiquidVideo? = null
+    var live = false
+        set(v) {
+            if (field != v) invalidate()
+            field = v
+        }
+    private var liveTiles = FloatArray(0)
+    private val liquidAt = IntArray(2)
+    private var panel: View? = null
+    private var panelRound = 0f
+
+    /**
+     * The settings panel [v] gets live glass too while it is fully shown ([panelLive]); null when it closes. Its right
+     * corners run off the screen.
+     */
+    fun setPanel(v: View?, round: Float) {
+        panel = v
+        panelRound = round
+        invalidate()
+    }
+
+    /** The panel shows live glass: open, not fading, over a video. Its [GlassDrawable] then cuts a hole for it. */
+    fun panelLive(v: View): Boolean = live && liquid != null && panel === v && v.isShown && alphaOf(v) == 255
     var shade = 0 // see GlassStyle.shade
     var grain = false // see GlassStyle.grain
         set(v) {
@@ -559,7 +605,17 @@ internal class GlassLayer(context: Context) : View(context) {
     }
 
     override fun onDraw(c: Canvas) {
-        if (tiles.isEmpty()) return
+        val glassGl = liquid
+        val liveOn = live && glassGl != null
+        var liveCount = 0
+        if (tiles.isEmpty()) {
+            glassGl?.setTiles(if (liveOn) panelRecord(glassGl!!) else FloatArray(0))
+            return
+        }
+        if (liveOn && liveTiles.size < (tiles.size + 1) * LiquidVideo.TILE) liveTiles = FloatArray((tiles.size + 1) * LiquidVideo.TILE)
+        // The panel's middle only tints what is drawn under it, so the tiles' glass stops at its left edge.
+        val panelGlass = if (liveOn) panelRecord(glassGl!!) else FloatArray(0)
+        val panelLeft = if (panelGlass.isEmpty()) Float.MAX_VALUE else panelGlass[6]
         val s = shader
         // A new viewport can need smaller images to stay within the shared memory limit.
         var needsBake = false
@@ -568,6 +624,8 @@ internal class GlassLayer(context: Context) : View(context) {
         getLocationInWindow(at)
         val ox = at[0]
         val oy = at[1]
+        // The renderer's view can sit elsewhere in the window: live tiles go to it in its own pixels.
+        if (liveOn) glassGl!!.view.getLocationInWindow(liquidAt)
         for (t in tiles) {
             val v = t.view.get() ?: continue
             val alpha = alphaOf(v)
@@ -612,7 +670,23 @@ internal class GlassLayer(context: Context) : View(context) {
             c.save()
             c.clipRect(visible.left - ox.toFloat(), visible.top - oy.toFloat(), visible.right - ox.toFloat(), visible.bottom - oy.toFloat())
             val sh = sharpShader
-            if (sh != null) {
+            if (liveOn) {
+                val dx = (ox - liquidAt[0]).toFloat()
+                val dy = (oy - liquidAt[1]).toFloat()
+                val o = liveCount++ * LiquidVideo.TILE
+                liveTiles[o] = rect.centerX() + dx
+                liveTiles[o + 1] = rect.centerY() + dy
+                liveTiles[o + 2] = rect.width() / 2
+                liveTiles[o + 3] = rect.height() / 2
+                liveTiles[o + 4] = minOf(rx, ry)
+                liveTiles[o + 5] = alpha / 255f
+                liveTiles[o + 6] = visible.left - liquidAt[0].toFloat()
+                liveTiles[o + 7] = visible.top - liquidAt[1].toFloat()
+                liveTiles[o + 8] = minOf(visible.right - liquidAt[0].toFloat(), panelLeft)
+                liveTiles[o + 9] = visible.bottom - liquidAt[1].toFloat()
+                liveTiles[o + 10] = LIVE_TINT
+                liveTiles[o + 11] = 1.06f
+            } else if (sh != null) {
                 val image = t.image?.takeIf { t.bakedArea == t.area }
                 val imageAlpha = if (image == null) 0 else clearImageAlpha(SystemClock.uptimeMillis() - t.readyAt, alpha,
                     android.animation.ValueAnimator.areAnimatorsEnabled())
@@ -644,10 +718,11 @@ internal class GlassLayer(context: Context) : View(context) {
                     c.drawRoundRect(rect, rx, ry, grainPaint)
                 }
             }
-            light(c, rx, ry, alpha, lit)
+            if (!liveOn) light(c, rx, ry, alpha, lit) // live glass draws its own rim
             if (lit) glint(c, v, rx, ry, alpha)
             c.restore()
         }
+        glassGl?.setTiles(if (liveOn) liveTiles.copyOf(liveCount * LiquidVideo.TILE) + panelGlass else FloatArray(0))
         if (sharp != null && !cacheFailed) {
             if (geometryChanged) {
                 cacheVersion++
@@ -664,6 +739,20 @@ internal class GlassLayer(context: Context) : View(context) {
         if (SystemClock.uptimeMillis() < until) postInvalidateOnAnimation()
     }
 
+
+    /** The settings panel's glass for [gl], last so it covers the tiles under it; empty when the panel has none. */
+    private fun panelRecord(gl: LiquidVideo): FloatArray {
+        val v = panel ?: return FloatArray(0)
+        if (!panelLive(v)) return FloatArray(0)
+        gl.view.getLocationInWindow(liquidAt)
+        v.getLocationInWindow(at)
+        val l = (at[0] - liquidAt[0]).toFloat()
+        val t = (at[1] - liquidAt[1]).toFloat()
+        val r = l + v.width + panelRound // the right corners off the screen, as GlassDrawable.flatRight
+        val b = t + v.height
+        return floatArrayOf((l + r) / 2, (t + b) / 2, (r - l) / 2, (b - t) / 2, panelRound, 1f,
+            l, t, minOf(r, gl.view.width.toFloat()), b, LIVE_PANEL_TINT, 1f) // no magnifying: it is large
+    }
 
     /** The light on the pane: the sheen on its top half, brighter on the focused tile. */
     private fun light(c: Canvas, rx: Float, ry: Float, alpha: Int, lit: Boolean) {
@@ -794,6 +883,9 @@ internal class GlassDrawable(private val host: View) : android.graphics.drawable
             field = v
             updateGloss()
         }
+    /** Says whether the video renderer draws this surface's glass ([GlassLayer.panelLive]): it is then cut out. */
+    var live: (() -> Boolean)? = null
+    private val holePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR) }
 
     /** The blur to paint, or null for a plain solid [wash] (a plain background has nothing to blur). */
     fun setBlur(b: Bitmap?) {
@@ -815,6 +907,11 @@ internal class GlassDrawable(private val host: View) : android.graphics.drawable
     override fun draw(c: Canvas) {
         rect.set(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat())
         if (flatRight) rect.right += round
+        // Clears the window down to the video, where LiquidVideo draws this surface's glass.
+        if (live?.invoke() == true) {
+            c.drawRoundRect(rect, round, round, holePaint)
+            return
+        }
         shader?.let { s ->
             host.getLocationOnScreen(at)
             val x = (at[0] + bounds.left).toFloat()
