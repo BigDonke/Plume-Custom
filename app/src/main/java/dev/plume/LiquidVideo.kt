@@ -11,6 +11,7 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -24,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * The video wallpaper and the liquid glass over it, drawn with OpenGL on a thread of their own into a SurfaceView
  * behind the home screen.
  *
- * The player decodes into a texture ([input]), so the frames reach the screen as ordinary pixels. A SurfaceView
+ * The player decodes into a texture ([inputs]), so the frames reach the screen as ordinary pixels. A SurfaceView
  * that the player drew into directly went to the TV's video plane, whose picture processing lifted the shadows
  * (level 16 showed as 32), and a TextureView made the whole home screen redraw on every video frame. Here the home
  * screen redraws only when it changes; [GlassLayer] sends where its tiles are ([setTiles]) and this draws the glass
@@ -34,6 +35,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * can. A blur under the glass, a copy of the frame or more taps per pixel each cost 10 ms or more a frame there.
  *
  * The surface keeps the last frame after the player stops, and it is drawn again when the view comes back.
+ *
+ * There are two inputs, so a video can loop with a crossfade: the next loop plays into the other one, and [show]
+ * blends the two while the old loop runs out.
  */
 internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
     private val thread = HandlerThread("liquid video").apply { start() }
@@ -43,13 +47,19 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
     private var config: EGLConfig? = null
     private var window: EGLSurface = EGL14.EGL_NO_SURFACE
     private var idle: EGLSurface = EGL14.EGL_NO_SURFACE // 1x1, current while there is no window
-    private var texture = 0
-    private var frames: SurfaceTexture? = null
+    private val textures = IntArray(2)
+    private val frames = arrayOfNulls<SurfaceTexture>(2)
     private var videoProgram = 0
     private var glassProgram = 0
-    private val texMatrix = FloatArray(16)
-    private var hasFrame = false
-    private var newFrame = false
+    private var fadeVideoProgram = 0
+    private var fadeGlassProgram = 0
+    private val texMatrix = arrayOf(FloatArray(16), FloatArray(16))
+    private val hasFrame = BooleanArray(2)
+    private val newFrame = BooleanArray(2)
+    private var front = 0 // the input on screen
+    private var fadeFrom = -1 // the input fading out, or -1
+    private var fadeStart = 0L
+    private var fadeMs = 0L
     private var width = 0
     private var height = 0
     private val queued = AtomicBoolean(false)
@@ -57,8 +67,8 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
     @Volatile private var tint = floatArrayOf(0f, 0f, 0f)
     @Volatile private var dp = 2f
 
-    /** Where the player draws. Valid until [release]. */
-    lateinit var input: Surface
+    /** Where the players draw, two of them. Valid until [release]. */
+    lateinit var inputs: List<Surface>
         private set
 
     private val quad = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -91,11 +101,24 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
         requestDraw()
     }
 
+    /** Shows what [slot] of [inputs] draws. With [fadeMs] above 0 it crossfades from the input shown now. */
+    fun show(slot: Int, fadeMs: Long) {
+        gl.post {
+            if (fadeMs > 0 && slot != front && hasFrame[front]) {
+                fadeFrom = front
+                fadeStart = SystemClock.uptimeMillis()
+                this.fadeMs = fadeMs
+            } else fadeFrom = -1
+            front = slot
+            draw()
+        }
+    }
+
     fun release() {
         view.holder.removeCallback(this)
         gl.post {
-            frames?.release()
-            input.release()
+            frames.forEach { it?.release() }
+            inputs.forEach { it.release() }
             if (display != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
                 if (window != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, window)
@@ -153,51 +176,59 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
         idle = EGL14.eglCreatePbufferSurface(display, config, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
         EGL14.eglMakeCurrent(display, idle, idle, context)
 
-        val ids = IntArray(1)
-        GLES20.glGenTextures(1, ids, 0)
-        texture = ids[0]
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        val st = SurfaceTexture(texture)
-        st.setOnFrameAvailableListener({ newFrame = true; requestDraw() }, gl)
-        frames = st
-        input = Surface(st)
+        GLES20.glGenTextures(2, textures, 0)
+        inputs = List(2) { slot ->
+            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textures[slot])
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            val st = SurfaceTexture(textures[slot])
+            st.setOnFrameAvailableListener({ newFrame[slot] = true; requestDraw() }, gl)
+            frames[slot] = st
+            Surface(st)
+        }
 
-        videoProgram = program(VERTEX, VIDEO)
-        glassProgram = program(VERTEX, GLASS)
+        videoProgram = program(VERTEX, fragment(VIDEO, fade = false))
+        glassProgram = program(VERTEX, fragment(GLASS, fade = false))
+        fadeVideoProgram = program(VERTEX, fragment(VIDEO, fade = true))
+        fadeGlassProgram = program(VERTEX, fragment(GLASS, fade = true))
     }
 
     private fun draw() {
-        val st = frames ?: return
         if (display == EGL14.EGL_NO_DISPLAY) return
-        if (newFrame) {
+        for (slot in 0..1) {
+            val st = frames[slot] ?: return
+            if (!newFrame[slot]) continue
             // Taken even without a window, or the player stalls waiting for its buffers back.
             EGL14.eglMakeCurrent(display, if (window != EGL14.EGL_NO_SURFACE) window else idle,
                 if (window != EGL14.EGL_NO_SURFACE) window else idle, context)
-            newFrame = false
-            try { st.updateTexImage() } catch (_: RuntimeException) { return }
-            st.getTransformMatrix(texMatrix)
-            hasFrame = true
+            newFrame[slot] = false
+            try { st.updateTexImage() } catch (_: RuntimeException) { continue }
+            st.getTransformMatrix(texMatrix[slot])
+            hasFrame[slot] = true
         }
+        // The new loop's frames keep coming during a fade, and each one draws the next step.
+        if (fadeFrom >= 0 && (!hasFrame[fadeFrom] || SystemClock.uptimeMillis() - fadeStart >= fadeMs)) fadeFrom = -1
+        val fading = fadeFrom >= 0
         if (window == EGL14.EGL_NO_SURFACE || width == 0 || height == 0) return
         EGL14.eglMakeCurrent(display, window, window, context)
         GLES20.glViewport(0, 0, width, height)
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        if (hasFrame) {
+        if (hasFrame[front]) {
             GLES20.glDisable(GLES20.GL_BLEND)
-            use(videoProgram)
-            rect(videoProgram, 0f, 0f, width.toFloat(), height.toFloat())
+            val video = if (fading) fadeVideoProgram else videoProgram
+            use(video)
+            rect(video, 0f, 0f, width.toFloat(), height.toFloat())
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             val list = tiles
             if (list.isNotEmpty()) {
                 GLES20.glEnable(GLES20.GL_BLEND)
                 GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
                 GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
+                val glassProgram = if (fading) fadeGlassProgram else glassProgram
                 use(glassProgram)
                 val t = tint
                 GLES20.glUniform1f(GLES20.glGetUniformLocation(glassProgram, "uDp"), dp)
@@ -227,9 +258,17 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
         GLES20.glEnableVertexAttribArray(pos)
         GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textures[front])
         GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uVideo"), 0)
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(p, "uTex"), 1, false, texMatrix, 0)
+        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(p, "uTex"), 1, false, texMatrix[front], 0)
+        if (fadeFrom >= 0) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textures[fadeFrom])
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "uVideo2"), 1)
+            GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(p, "uTex2"), 1, false, texMatrix[fadeFrom], 0)
+            val mix = ((SystemClock.uptimeMillis() - fadeStart).toFloat() / fadeMs).coerceIn(0f, 1f)
+            GLES20.glUniform1f(GLES20.glGetUniformLocation(p, "uMix"), mix * mix * (3 - 2 * mix)) // eased at both ends
+        }
         GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "uScreen"), width.toFloat(), height.toFloat())
     }
 
@@ -270,16 +309,39 @@ void main() {
 }
 """
 
-        private const val VIDEO = """
-#extension GL_OES_EGL_image_external : require
-precision highp float;
+        /**
+         * The start of both fragment shaders: video() reads the frame at a pixel. With FADE it blends in the input
+         * that fades out by uMix, so the glass and the video under it fade together.
+         */
+        private const val SAMPLE = """
 uniform samplerExternalOES uVideo;
 uniform mat4 uTex;
 uniform vec2 uScreen;
 varying vec2 vPx;
+#ifdef FADE
+uniform samplerExternalOES uVideo2;
+uniform mat4 uTex2;
+uniform float uMix;
+#endif
+
+vec3 video(vec2 px) {
+    px = clamp(px, vec2(0.5), uScreen - 0.5);
+    vec4 at = vec4(px.x / uScreen.x, 1.0 - px.y / uScreen.y, 0.0, 1.0);
+    vec3 c = texture2D(uVideo, (uTex * at).xy).rgb;
+#ifdef FADE
+    c = mix(texture2D(uVideo2, (uTex2 * at).xy).rgb, c, uMix);
+#endif
+    return c;
+}
+"""
+
+        private fun fragment(body: String, fade: Boolean) =
+            "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n" +
+                (if (fade) "#define FADE\n" else "") + SAMPLE + body
+
+        private const val VIDEO = """
 void main() {
-    vec2 uv = (uTex * vec4(vPx.x / uScreen.x, 1.0 - vPx.y / uScreen.y, 0.0, 1.0)).xy;
-    gl_FragColor = vec4(texture2D(uVideo, uv).rgb, 1.0);
+    gl_FragColor = vec4(video(vPx), 1.0);
 }
 """
 
@@ -291,28 +353,16 @@ void main() {
          * it turns smoothly round the corners. Premultiplied output.
          */
         private const val GLASS = """
-#extension GL_OES_EGL_image_external : require
-precision highp float;
-uniform samplerExternalOES uVideo;
-uniform mat4 uTex;
-uniform vec2 uScreen;
 uniform vec4 uBox;
 uniform float uCorner;
 uniform float uDp;
 uniform float uAlpha;
 uniform vec4 uTint;
 uniform float uZoom;
-varying vec2 vPx;
 
 float roundBox(vec2 p, vec2 h, float r) {
     vec2 q = abs(p) - h + r;
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-}
-
-vec3 video(vec2 px) {
-    px = clamp(px, vec2(0.5), uScreen - 0.5);
-    vec2 uv = (uTex * vec4(px.x / uScreen.x, 1.0 - px.y / uScreen.y, 0.0, 1.0)).xy;
-    return texture2D(uVideo, uv).rgb;
 }
 
 void main() {

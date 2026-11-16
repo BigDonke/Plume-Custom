@@ -3,6 +3,8 @@ package dev.plume
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaPlayer
+import android.os.Handler
+import android.os.Looper
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -16,17 +18,30 @@ import java.util.zip.GZIPInputStream
  *
  * The player draws into [LiquidVideo], which keeps the last frame when the player stops. The next player picks up at
  * the same moment, so coming back to the home screen shows no jump.
+ *
+ * A video loops with a crossfade. A few seconds before the end a second player gets ready on the other input of
+ * [LiquidVideo]. It starts [LOOP_FADE_MS] before the end, and from its first frame the picture fades over to it
+ * while the old loop runs out. If the second player fails, the video starts over with a cut.
  */
 internal class VideoWallpaper(
     private val liquid: LiquidVideo,
     private val onFrame: () -> Unit,
     private val onError: () -> Unit,
 ) {
-    private var player: MediaPlayer? = null
+    private val ui = Handler(Looper.getMainLooper())
+    private var player: MediaPlayer? = null // on screen, drawing into input [slot]
+    private var next: MediaPlayer? = null // the next loop, on the other input
+    private var nextReady = false
+    private var nextStarted = false
+    private var nextFailed = false // no second player this loop: it starts over with a cut
+    private var leaving: MediaPlayer? = null // the old loop, running out under the fade
+    private var slot = 0
     private var file: File? = null
     private var active = false
     private var rendered = false // the player has shown a frame of the current file
     private var position = 0 // where the last player of this file stopped, in ms
+    private val watch = Runnable { watchLoop() }
+    private val dropLeaving = Runnable { leaving?.release(); leaving = null }
 
     fun show(file: File, play: Boolean) {
         if (this.file != file) { release(); this.file = file; position = 0 }
@@ -54,40 +69,126 @@ internal class VideoWallpaper(
     }
 
     private fun start() {
-        val target = file?.takeIf { it.isFile } ?: return onError()
+        // onResume can come before the wallpaper has loaded. With no file yet, show() starts the player later.
+        val target = file ?: return
+        if (!target.isFile) return onError()
         if (player != null) return
         try {
-            player = MediaPlayer().also { p ->
-                p.setOnPreparedListener {
-                    it.isLooping = true
-                    it.setVolume(0f, 0f)
-                    if (position in 1 until it.duration) it.seekTo(position.toLong(), MediaPlayer.SEEK_CLOSEST)
-                    it.start()
-                }
-                p.setOnInfoListener { _, what, _ ->
-                    if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) { rendered = true; onFrame() }
-                    false
-                }
-                p.setOnErrorListener { _, _, _ -> release(); onError(); true }
-                p.setDataSource(target.path)
-                p.setSurface(liquid.input)
-                p.prepareAsync()
-            }
+            player = newPlayer(target, slot)
         } catch (_: Exception) {
             release()
             onError()
         }
     }
 
+    /** A player for [target] on input [on]. Its listeners check which role it has now, as the roles move on. */
+    private fun newPlayer(target: File, on: Int) = MediaPlayer().also { p -> try {
+        p.setOnPreparedListener {
+            it.setVolume(0f, 0f)
+            if (it === next) { nextReady = true; watchSoon(); return@setOnPreparedListener }
+            it.isLooping = it.duration < LOOP_FADE_MS * 3 // too short to fade
+            if (position in 1 until it.duration) it.seekTo(position.toLong(), MediaPlayer.SEEK_CLOSEST)
+            it.start()
+            watchSoon()
+        }
+        p.setOnInfoListener { it, what, _ ->
+            if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                if (it === next) takeOver()
+                else if (it === player && !rendered) { rendered = true; onFrame() }
+            }
+            false
+        }
+        p.setOnErrorListener { it, _, _ ->
+            when {
+                it === player -> { release(); onError() }
+                it === next -> { dropNext(); nextFailed = true }
+                it === leaving -> dropLeaving.run()
+            }
+            true
+        }
+        p.setOnCompletionListener {
+            when {
+                it === leaving -> dropLeaving.run()
+                it !== player -> {}
+                nextStarted -> takeOver() // its first frame never reported: fade now
+                else -> { it.seekTo(0); it.start(); nextFailed = false; watchSoon() }
+            }
+        }
+        p.setDataSource(target.path)
+        p.setSurface(liquid.inputs[on])
+        p.prepareAsync()
+    } catch (e: Exception) { p.release(); throw e } }
+
+    private fun watchSoon() {
+        ui.removeCallbacks(watch)
+        ui.post(watch)
+    }
+
+    /** Gets the next loop ready near the end and starts it [LOOP_FADE_MS] before the end. */
+    private fun watchLoop() {
+        val p = player ?: return
+        if (p.isLooping || nextStarted || !active) return
+        val left = runCatching { if (p.isPlaying) p.duration - p.currentPosition else null }.getOrNull() ?: return
+        if (next == null && !nextFailed && left <= LOOP_FADE_MS + LOOP_PREPARE_MS) {
+            val target = file ?: return
+            try { next = newPlayer(target, 1 - slot) } catch (_: Exception) { dropNext(); nextFailed = true }
+        }
+        val n = next
+        if (n != null && nextReady && left <= LOOP_FADE_MS) {
+            n.start()
+            nextStarted = true
+            return
+        }
+        val at = if (next == null && !nextFailed) LOOP_FADE_MS + LOOP_PREPARE_MS else LOOP_FADE_MS
+        ui.postDelayed(watch, (left - at).coerceIn(50, 1000))
+    }
+
+    /** The next loop shows its first frame: it fades in on its input, and the old loop runs out under it. */
+    private fun takeOver() {
+        val n = next ?: return
+        dropLeaving.run()
+        leaving = player
+        player = n
+        next = null
+        nextReady = false
+        nextStarted = false
+        nextFailed = false
+        slot = 1 - slot
+        rendered = true
+        liquid.show(slot, LOOP_FADE_MS)
+        ui.removeCallbacks(dropLeaving)
+        ui.postDelayed(dropLeaving, LOOP_FADE_MS + 500)
+        watchSoon()
+    }
+
+    private fun dropNext() {
+        next?.release()
+        next = null
+        nextReady = false
+        nextStarted = false
+    }
+
     private fun release() {
+        ui.removeCallbacks(watch)
+        ui.removeCallbacks(dropLeaving)
+        if (leaving != null) liquid.show(slot, 0) // a fade cut short ends on the new loop
         player?.let { p ->
             if (rendered) position = runCatching { p.currentPosition }.getOrDefault(0)
             p.release()
         }
         player = null
         rendered = false
+        dropNext()
+        nextFailed = false
+        dropLeaving.run()
     }
 }
+
+/** How long a loop's end fades into its start, in ms. */
+internal const val LOOP_FADE_MS = 4000L
+
+/** How long before the fade the next loop's player gets ready, in ms. */
+private const val LOOP_PREPARE_MS = 3000L
 
 /** Reject mislabeled files and videos outside the TV wallpaper size limit. */
 internal fun validVideo(file: File): Boolean {
