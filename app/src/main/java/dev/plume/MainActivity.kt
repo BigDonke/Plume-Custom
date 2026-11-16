@@ -74,6 +74,8 @@ import android.text.TextWatcher
 import android.text.format.DateFormat
 import android.text.style.BulletSpan
 import android.text.style.StyleSpan
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
@@ -1179,8 +1181,10 @@ class MainActivity : Activity() {
         ink(findViewById(R.id.rowLabel), appsInk, fade = true)
         val cols = (0 until watchRow.childCount).map { watchRow.getChildAt(it) as ViewGroup }
         val watch = listOf(watchTitle) + cols.flatMap { col -> (0 until col.childCount).mapNotNull { col.getChildAt(it) as? TextView } }
+        val wasInk = watchInk
         watchInk = inkBehind(watch)
         for (v in watch) ink(v, watchInk, fade = true)
+        if (watchInk != wasInk && inkMark(cardCurrent?.key)) showTitle() // the mark in the title takes the new colour
         // The progress bar and the source mark go with the card's text.
         for (col in cols) for (i in 0 until col.childCount) when (val v = col.getChildAt(i)) {
             is ProgressBar -> v.progressDrawable = progressBarDrawable(watchInk)
@@ -6406,8 +6410,17 @@ class MainActivity : Activity() {
         val lp = watchTitle.layoutParams as LinearLayout.LayoutParams
         val start = -side
         if (lp.marginStart != start) { lp.marginStart = start; watchTitle.layoutParams = lp }
-        val room = ((resources.displayMetrics.widthPixels - dp(96)) * 2 / 3).toFloat()
-        val name = TextUtils.ellipsize(rowTitle(), watchTitle.paint, room, TextUtils.TruncateAt.END)
+        // Split by app, the app's mark goes before its name, in the text, so it slides with the name on a switch.
+        val mark = cardCurrent?.takeIf { cardsMode() != ShowRows.MIXED }?.let { sourceIcon(it.key) }?.apply {
+            val s = (watchTitle.textSize * 1.1f).toInt()
+            setBounds(0, 0, s, s)
+            if (inkMark(cardCurrent?.key)) setTint(watchInk) // the colour the title's text goes to
+        }
+        val room = ((resources.displayMetrics.widthPixels - dp(96)) * 2 / 3).toFloat() - (mark?.bounds?.width() ?: 0)
+        val label = TextUtils.ellipsize(rowTitle(), watchTitle.paint, room, TextUtils.TruncateAt.END)
+        val name = if (mark == null) label else SpannableStringBuilder(" ").append("  ").append(label).apply {
+            setSpan(ImageSpan(mark, if (Build.VERSION.SDK_INT >= 29) DynamicDrawableSpan.ALIGN_CENTER else DynamicDrawableSpan.ALIGN_BASELINE), 0, 1, 0)
+        }
         val text: CharSequence = if (cardsMode() == ShowRows.MIXED || cardSources.size < 2 || at < 0) name else {
             val count = if (cardSources.size <= 5) cardSources.indices.joinToString(" ") { if (it == at) "●" else "○" }
                 else "${at + 1} / ${cardSources.size}"
@@ -6432,7 +6445,10 @@ class MainActivity : Activity() {
         refreshWatchNext()
     }
 
-    /** Small source-app mark for the details line: its logo when we have one (brand colour with colour icons), else its icon (greyscale unless colour). */
+    /** Whether [pkg]'s mark is a plain logo, not the app's own icon or in brand colour: it takes the colour of the text beside it. */
+    private fun inkMark(pkg: String?) = LOGOS[pkg]?.second == false && (!cwColour() || BRAND_COLOURS[pkg] == null)
+
+    /** Small source-app mark for the details line or the row title: its logo when we have one (brand colour with colour icons), else its icon (greyscale unless colour). */
     private fun sourceIcon(pkg: String?): Drawable? {
         if (pkg == null) return null
         val colour = cwColour()
@@ -6633,7 +6649,8 @@ class MainActivity : Activity() {
         val sub = col.getChildAt(3) as TextView
         frame.setTag(R.id.watchRow, p) // holding OK hides it (see onHold)
         frame.contentDescription = p.title
-        val icon = sourceIcon(p.pkg)
+        // Split by app, every card is from the app the title names, and the title has its mark.
+        val icon = if (cardsMode() == ShowRows.MIXED) sourceIcon(p.pkg) else null
         bar.setProgress(p.progress, fade && ValueAnimator.areAnimatorsEnabled())
         bar.visibility = if (p.progress > 0) View.VISIBLE else View.INVISIBLE
         val slide = fade && ValueAnimator.areAnimatorsEnabled()
@@ -6646,7 +6663,7 @@ class MainActivity : Activity() {
             icon?.setBounds(0, 0, dp(12), dp(12))
             sub.setCompoundDrawablesRelative(icon, null, null, null)
             // A plain mark (not the app's own icon, not in brand colour) follows the text, as fitInk tints it.
-            sub.tag = if (LOGOS[p.pkg]?.second == false && (!cwColour() || BRAND_COLOURS[p.pkg] == null)) INK_MARK else null
+            sub.tag = if (icon != null && inkMark(p.pkg)) INK_MARK else null
             if (sub.tag == INK_MARK) icon?.setTint(watchInk)
             // Split by source, a card without details keeps their space, or the row would change height with the source.
             sub.visibility = if (p.sub.isNotEmpty() || icon != null) View.VISIBLE else if (cardsMode() == ShowRows.MIXED) View.GONE else View.INVISIBLE
