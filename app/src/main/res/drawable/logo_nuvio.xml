@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- nuvio mark, drawn after Nuvio's app_logo_mark.png: the play shape, its cut-out and the small play inside. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:fillColor="#FF000000" android:fillType="evenOdd" android:pathData="M6.918 0.559L20.959 8.665A3.851 3.851 0 0 1 20.959 15.335L6.918 23.441A3.851 3.851 0 0 1 1.142 20.106L1.142 3.894A3.851 3.851 0 0 1 6.918 0.559zM8.351 7.029L14.946 10.837A1.343 1.343 0 0 1 14.946 13.163L8.351 16.971A1.343 1.343 0 0 1 6.336 15.808L6.336 8.192A1.343 1.343 0 0 1 8.351 7.029zM9.649 9.923L12.306 11.457A0.627 0.627 0 0 1 12.306 12.543L9.649 14.077A0.627 0.627 0 0 1 8.709 13.534L8.709 10.466A0.627 0.627 0 0 1 9.649 9.923z" />
+</vector>

@@ -51,6 +51,7 @@ Put changes that are not released under `## Unreleased`. Rename that heading to 
 - Plume uses 1080p wallpapers on Hisense lushan TVs to prevent a black background.
 - Top icons use a smaller, lighter shadow over wallpapers.
 - Continue Watching shows Watch Next on Philips TVs with Android 12. Before, the row stayed empty (#265).
+- Nuvio has its own mark on the app row and in Continue Watching. Before, it showed a grey square.
 
 ## 1.7.1
 

@@ -7148,6 +7148,8 @@ class MainActivity : Activity() {
             "com.spotify.tv.android" to 0xFF1DB954.toInt(),
             "org.videolan.vlc" to 0xFFFF8800.toInt(),
             "com.android.vending" to 0xFF01875F.toInt(),
+            "com.nuvio.tv" to 0xFFA855F7.toInt(),
+            "com.nuvio.app" to 0xFFA855F7.toInt(),
         )
 
         val DEFAULT_ORDER = listOf(
@@ -7172,7 +7174,10 @@ class MainActivity : Activity() {
             "hdmi" to R.drawable.ic_hdmi,
         )
 
-        /** Monochrome brand marks (Simple Icons, CC0). `true` = wordmark, shown without a label. */
+        /**
+         * Monochrome brand marks (Simple Icons, CC0; Nuvio's is drawn here, as its icon is a flat picture with no
+         * symbol layer). `true` = wordmark, shown without a label. Nuvio's sideloaded and Play Store builds differ in package.
+         */
         val LOGOS = mapOf(
             "com.netflix.ninja" to (R.drawable.logo_netflix to false),
             "com.stremio.one" to (R.drawable.logo_stremio to false),
@@ -7183,6 +7188,8 @@ class MainActivity : Activity() {
             "com.spotify.tv.android" to (R.drawable.logo_spotify to false),
             "org.videolan.vlc" to (R.drawable.logo_vlcmediaplayer to false),
             "com.android.vending" to (R.drawable.logo_googleplay to false),
+            "com.nuvio.tv" to (R.drawable.logo_nuvio to false),
+            "com.nuvio.app" to (R.drawable.logo_nuvio to false),
         )
     }
 }
