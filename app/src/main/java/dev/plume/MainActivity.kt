@@ -492,17 +492,15 @@ class MainActivity : Activity() {
             setOnFocusChangeListener { v, focused ->
                 if (focused) lastTop = v
                 (background as LayerDrawable).getDrawable(0).alpha = if (focused) 0 else 255 // on its disc it needs none
-                // With glass a lit icon sits on a glass disc: the frost, its light and the wallpaper's tint.
-                val disc = glassActive()
-                ring.setColor(if (!focused) 0 else if (disc) glassLook().tile(lit = true) else if (dark) DARK_CARD_LIT[0] else Color.WHITE)
-                if (focused && disc) glass.add(v, v.width / 2f) else glass.remove(v)
-                if (disc) glass.kick(260) // the disc grows with the icon
+                topDisc(this, focused)
+                if (glassActive()) glass.kick(260) // the disc grows with the icon
                 setColorFilter(if (focused) fg else iconInk)
                 animate().scaleX(if (focused) 1.15f else 1f).scaleY(if (focused) 1.15f else 1f)
                     .setDuration(160).setInterpolator(DECELERATE).start()
             }
             setOnClickListener { action() }
             setOnLongClickListener { if (!holdFired) fireHold(this); true } // hold OK: move, hide or add icons
+            topDisc(this, false)
         }
         if (intent.getBooleanExtra(Remap.OPEN_ALL_APPS, false) || intent.getBooleanExtra(Remap.OPEN_RECENT_APPS, false) || fakeSetup(intent)) {
             // An explicit drawer request takes priority over setup and update cards.
@@ -1147,6 +1145,14 @@ class MainActivity : Activity() {
     private fun topIcons() = TOP_KEYS.keys.toList()
         .map { findViewById<ImageView>(it) }
 
+    /** With glass every top icon sits on a glass disc, clear at rest and lit on focus. Without, only the lit one has a disc. */
+    private fun topDisc(v: ImageView, focused: Boolean) {
+        val ring = (v.background as LayerDrawable).getDrawable(1) as GradientDrawable
+        val disc = glassActive()
+        ring.setColor(if (disc) glassLook().tile(lit = focused) else if (!focused) 0 else if (dark) DARK_CARD_LIT[0] else Color.WHITE)
+        if (disc) glass.add(v, v.layoutParams.width / 2f) else glass.remove(v)
+    }
+
     private fun fitInk() {
         val top = listOf(R.id.clock, R.id.date, R.id.weather, R.id.featured).map { findViewById<TextView>(it) }
         val topInk = inkBehind(top)
@@ -1386,6 +1392,7 @@ class MainActivity : Activity() {
             applyTheme()
             baked.clear()
             glass.clearTiles()
+            for (v in topIcons()) topDisc(v, v.isFocused)
             renderApps()
             watchKey = null
             showWatchNext(Cards(cardSources, cardCurrent, watchList))
@@ -4013,8 +4020,9 @@ class MainActivity : Activity() {
         val firstFill = appRow.childCount == 0 && currentFocus?.parent === wifi.parent
         val takeFocus = currentFocus == null || currentFocus?.parent === appRow || firstFill
         val gap = dp(GRID_GAP)
-        val width = rowTileWidth()
-        val tileH = if (isBannerStyle(iconStyle())) width * 9 / 16 else (dp(76) * rowScale()).toInt() // 16:9 like a banner
+        val banner = isBannerStyle(iconStyle())
+        val tileH = if (banner) rowTileWidth() * 9 / 16 else rowTileHeight() // 16:9 like a banner
+        val width = if (banner) rowTileWidth() else tileH // the marks sit in circles
         // The row sits on the bottom of its space. A banner row is shorter, so lift it by half the difference: its
         // centre stays where the card row's is, between the clock and Continue Watching. A taller row (Large,
         // Largest) grows upward only, or it would cover Continue Watching's title.
@@ -4063,6 +4071,9 @@ class MainActivity : Activity() {
 
     /** Width of a home row tile: [across] of them fill the screen, eight at Standard size. */
     private fun rowTileWidth(across: Int = rowTiles()) = (resources.displayMetrics.widthPixels - dp(96) - dp(GRID_GAP) * (across - 1)) / across
+
+    /** Height of a home row tile with a mark (not a banner), and so the size of its circle. */
+    private fun rowTileHeight() = (dp(76) * rowScale()).toInt()
 
     /** How much bigger the row's tiles are than at Standard size: their height and the space around the mark grow with it. */
     private fun rowScale() = rowTileWidth().toFloat() / rowTileWidth(ROW_TILES)
@@ -4113,7 +4124,7 @@ class MainActivity : Activity() {
             tag = a.pkg
             setOnClickListener { launch(a) }
         }
-        style(col, dp(8), card = false, lift = 1.12f) { focused ->
+        style(col, dp(TILE_CORNER), card = false, lift = 1.12f) { focused ->
             if (!grey) dim.animate().alpha(if (focused) 0f else BANNER_DIM).setDuration(160).start()
             if (!grey) return@style
             pic.colorFilter = if (focused) null else GREYSCALE
@@ -4130,6 +4141,9 @@ class MainActivity : Activity() {
             ?.apply { if (!colourIcons()) colorFilter = GREYSCALE }
             ?: customIcon(a.pkg)
         val name = a.label.takeIf { labeled }
+        val round = !labeled && !isBannerStyle(iconStyle()) // a home row mark sits in a circle
+        fun tile(label: String?, icon: Drawable, mono: Boolean, tag: String, wordmarkInset: Int? = null, tint: Int? = null, onClick: () -> Unit) =
+            this@MainActivity.tile(label, icon, mono, tag, wordmarkInset, tint, if (round) rowTileHeight() / 2 else dp(TILE_CORNER), round, onClick)
         // Colour mode keeps the same marks, tinted with the brand colour (or the colour the app's icon is mostly).
         val colour = colourIcons()
         // A banner style, an app with no banner: its own colour behind its mark in white, so the row doesn't mix pictures
@@ -4207,7 +4221,7 @@ class MainActivity : Activity() {
     }
 
     /** White card: logo on top, name underneath. With no label the mark sits alone, centred, at one size. */
-    private fun tile(label: String?, icon: Drawable, mono: Boolean, tag: String, wordmarkInset: Int? = null, tint: Int? = null, onClick: () -> Unit): View {
+    private fun tile(label: String?, icon: Drawable, mono: Boolean, tag: String, wordmarkInset: Int?, tint: Int?, corner: Int, round: Boolean, onClick: () -> Unit): View {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -4228,7 +4242,7 @@ class MainActivity : Activity() {
         val restText = if (dark) 0.65f else 1f
         img.alpha = restLogo
         text?.alpha = restText
-        style(col, dp(8), card = true) { focused ->
+        style(col, corner, card = true) { focused ->
             text?.setActive(focused) // a name too wide for the tile scrolls while it is selected
             if (!dark) return@style
             img.animate().alpha(if (focused) 1f else restLogo).setDuration(160).start()
@@ -4243,7 +4257,7 @@ class MainActivity : Activity() {
             } else {
                 val s = rowScale() // only home row tiles have no name: All apps keeps its one size
                 val v = ((if (isBannerStyle(iconStyle())) dp(8) else dp(20)) * s).toInt() // banner rows are shorter
-                val h = (dp(16) * s).toInt()
+                val h = if (round) v else (dp(16) * s).toInt()
                 img.setPadding(h, v, h, v)
             }
             col.addView(img, LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -7036,6 +7050,7 @@ class MainActivity : Activity() {
         val GLASS_STYLES: List<GlassStyle?> = listOf(null, GlassStyle.FROSTED, GlassStyle.CLEAR)
         val THEMES = listOf("light", "dark", "wallpaper", "auto")
         const val GRID_GAP = 16 // dp; shared by the apps row and the cards so their columns line up
+        const val TILE_CORNER = 18 // dp; app tiles and banners, rounded like Apple TV's icons
         const val INK_MARK = "ink mark" // tag on a card's detail line whose source mark takes the text colour
         /** Shown names for the wallpaper keys saved in prefs (the keys stay English). */
         val WALLPAPER_NAMES = mapOf(
