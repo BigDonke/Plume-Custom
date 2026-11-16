@@ -15,12 +15,12 @@ class ShowRowsTest {
         assertEquals(ShowRows.PER_CHANNEL, ShowRows.mode("stack"))
     }
 
-    @Test fun watchNextComesFirstThenContinueWatchingThenTheRestInTheirOrder() {
+    @Test fun appsWithContinueWatchingComeFirstThenTheRestInTheirOrder() {
         val given = listOf(
-            src("plex", ShowRows.Kind.OTHER), src("stremio-cw", ShowRows.Kind.CONTINUE),
-            src("watchnext", ShowRows.Kind.WATCH_NEXT), src("catalog", ShowRows.Kind.OTHER), src("other-cw", ShowRows.Kind.CONTINUE),
+            src("plex", ShowRows.Kind.OTHER), src("stremio", ShowRows.Kind.CONTINUE),
+            src("spotify", ShowRows.Kind.OTHER), src("nuvio", ShowRows.Kind.CONTINUE),
         )
-        assertEquals(listOf("watchnext", "stremio-cw", "other-cw", "plex", "catalog"), ShowRows.ordered(given).map { it.key })
+        assertEquals(listOf("stremio", "nuvio", "plex", "spotify"), ShowRows.ordered(given).map { it.key })
     }
 
     @Test fun theSavedSourceIsKeptWhileItExistsElseTheFirstOne() {
@@ -63,11 +63,11 @@ class ShowRowsTest {
 
     @Test fun oneSourceReplacingAnotherChangesTheStamp() {
         val cards = listOf("Show/S1/10/img")
-        val before = ShowRows.stamp(listOf("watchnext" to "Watch Next", "plex" to "Plex"), "watchnext", cards)
+        val before = ShowRows.stamp(listOf("nuvio" to "Nuvio", "plex" to "Plex"), "nuvio", cards)
         // Same number of sources, same cards on show: only the second source is another one.
-        val after = ShowRows.stamp(listOf("watchnext" to "Watch Next", "stremio" to "Stremio"), "watchnext", cards)
+        val after = ShowRows.stamp(listOf("nuvio" to "Nuvio", "stremio" to "Stremio"), "nuvio", cards)
         assertNotEquals(before, after)
-        assertNotEquals(before, ShowRows.stamp(listOf("watchnext" to "Watch Next", "plex" to "Plex TV"), "watchnext", cards)) // renamed
-        assertEquals(before, ShowRows.stamp(listOf("watchnext" to "Watch Next", "plex" to "Plex"), "watchnext", cards.toList()))
+        assertNotEquals(before, ShowRows.stamp(listOf("nuvio" to "Nuvio", "plex" to "Plex TV"), "nuvio", cards)) // renamed
+        assertEquals(before, ShowRows.stamp(listOf("nuvio" to "Nuvio", "plex" to "Plex"), "nuvio", cards.toList()))
     }
 }
