@@ -324,6 +324,8 @@ class MainActivity : Activity() {
     }
     // Posters get their own threads: one slow image server must not hold up the rest (or the row data).
     private val posterIo = Executors.newFixedThreadPool(3)
+    /** The settings' wallpaper pictures: [io] also reads a video's sample frames (seconds) and downloads wallpapers. */
+    private val thumbIo = Executors.newSingleThreadExecutor()
     private val loading = java.util.Collections.synchronizedSet(HashSet<String>())
     private val ui = Handler(Looper.getMainLooper())
     /** Recent apps' full-size Continue Watching art, apart so it never pushes the row's posters out. */
@@ -669,6 +671,7 @@ class MainActivity : Activity() {
             ui.removeCallbacksAndMessages(null) // the clocks and the posts still queued must not use the pools below
             io.shutdownNow()
             posterIo.shutdownNow()
+            thumbIo.shutdownNow()
         }
         super.onDestroy()
     }
@@ -1618,8 +1621,9 @@ class MainActivity : Activity() {
      * The first frame of a video wallpaper, shown until the video plays: the player takes a second to start (longer
      * after a theme change recreates the screen), and the default picture in that second looked like a wrong
      * wallpaper. The video starts at this same frame, so the switch does not show. Read once, then kept as a JPEG.
+     * Only the shown video's is kept: a settings picture of another video ([keep] false) reads its frame and keeps none.
      */
-    private fun videoPoster(video: File): Bitmap? {
+    private fun videoPoster(video: File, keep: Boolean = true): Bitmap? {
         val cache = File(cacheDir, "poster-${video.name}-${video.length()}-${video.lastModified()}.jpg")
         if (cache.isFile) BitmapFactory.decodeFile(cache.path)?.let { return it }
         val r = android.media.MediaMetadataRetriever()
@@ -1631,10 +1635,14 @@ class MainActivity : Activity() {
                     val w = resources.displayMetrics.widthPixels
                     if (f.width <= w) f else Bitmap.createScaledBitmap(f, w, maxOf(1, f.height * w / f.width), true).also { f.recycle() }
                 }
-            frame?.also { f ->
+            if (keep) frame?.also { f ->
                 cacheDir.listFiles { f2 -> f2.name.startsWith("poster-") }?.forEach { it.delete() } // only the shown video's
-                cache.outputStream().use { f.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                // Written aside, then renamed: a settings picture reading it at the same time never gets half a JPEG.
+                val part = File(cacheDir, "part-${cache.name}")
+                part.outputStream().use { f.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                if (!part.renameTo(cache)) part.delete()
             }
+            frame
         } catch (e: Exception) {
             null
         } finally {
@@ -3763,7 +3771,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 0)
             clearColorFilter()
             setImageBitmap(cached)
-        } else if (!choice.startsWith("plain:")) io.execute {
+        } else if (!choice.startsWith("plain:")) thumbIo.execute {
             val bmp = try {
                 // 1920 px wide comes out 120 for a row, 480 for the hero card
                 val small = BitmapFactory.Options().apply { inSampleSize = if (big) 4 else 16 }
@@ -3773,7 +3781,7 @@ class MainActivity : Activity() {
                     choice == ShowsWall.CHOICE -> BitmapFactory.decodeFile(ShowsWall.file(this@MainActivity).path, small)
                     choice.startsWith("file:") -> BitmapFactory.decodeFile(File(wallpaperDir(), choice.removePrefix("file:")).path, small)
                     choice.startsWith("pack:") -> BitmapFactory.decodeFile(File(packDir(), choice.removePrefix("pack:")).path, small)
-                    choice.startsWith("video:") -> File(wallpaperDir(), choice.removePrefix("video:")).takeIf { it.isFile }?.let { videoPoster(it) }?.let { p ->
+                    choice.startsWith("video:") -> File(wallpaperDir(), choice.removePrefix("video:")).takeIf { it.isFile }?.let { videoPoster(it, keep = false) }?.let { p ->
                         val w = if (big) 480 else 160
                         Bitmap.createScaledBitmap(p, w, maxOf(1, w * p.height / p.width), true).also { if (it !== p) p.recycle() }
                     }
