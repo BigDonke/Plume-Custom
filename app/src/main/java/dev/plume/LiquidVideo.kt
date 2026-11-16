@@ -6,12 +6,14 @@ import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
+import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import android.view.Choreographer
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -38,6 +40,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * There are two inputs, so a video can loop with a crossfade: the next loop plays into the other one, and [show]
  * blends the two while the old loop runs out.
+ *
+ * While the video plays, only a new frame from the front input draws. A tile move or a fade step waits for that
+ * frame, at most one video frame later. Drawing on each tile move doubled the GPU work during a focus move, and the
+ * TV then showed video frames late. Each frame is also given its time on screen ([present]), so a busy GPU no
+ * longer pushes it to the next refresh.
  */
 internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
     private val thread = HandlerThread("liquid video").apply { start() }
@@ -66,6 +73,15 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
     @Volatile private var tiles = FloatArray(0)
     @Volatile private var tint = floatArrayOf(0f, 0f, 0f)
     @Volatile private var dp = 2f
+    @Volatile private var frameAt = 0L // uptime of the newest frame from either input
+    private var frontAt = 0L // uptime of the newest frame from the front input
+    private var arrivedNs = 0L // System.nanoTime when the front input's newest frame was taken
+    private var lastStamp = 0L // that frame's decoder timestamp
+    private var interval = 0.0 // the decoder's frame interval, smoothed, in ns
+    private var target = 0L // when the last frame was asked to show
+    private var vsync = 0L // a recent vsync, in ns
+    private var vsyncAsked = false
+    @Volatile private var period = 16_666_667L // one refresh, in ns
 
     /** Where the players draw, two of them. Valid until [release]. */
     lateinit var inputs: List<Surface>
@@ -90,7 +106,7 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
     fun setTiles(list: FloatArray) {
         if (list.contentEquals(tiles)) return
         tiles = list
-        requestDraw()
+        if (!playing()) requestDraw()
     }
 
     /** The glass's tint, an opaque colour. Each tile says how much of it covers the video. */
@@ -98,7 +114,7 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
         val t = floatArrayOf((colour shr 16 and 0xFF) / 255f, (colour shr 8 and 0xFF) / 255f, (colour and 0xFF) / 255f)
         if (t.contentEquals(tint)) return
         tint = t
-        requestDraw()
+        if (!playing()) requestDraw()
     }
 
     /** Shows what [slot] of [inputs] draws. With [fadeMs] above 0 it crossfades from the input shown now. */
@@ -110,7 +126,7 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
                 this.fadeMs = fadeMs
             } else fadeFrom = -1
             front = slot
-            draw()
+            if (!playing()) draw()
         }
     }
 
@@ -135,7 +151,12 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
         window = EGL14.eglCreateWindowSurface(display, config, holder.surface, intArrayOf(EGL14.EGL_NONE), 0)
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) = onGl {
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+        view.display?.refreshRate?.takeIf { it > 1f }?.let { period = (1e9 / it).toLong() }
+        surfaceSized(w, h)
+    }
+
+    private fun surfaceSized(w: Int, h: Int) = onGl {
         width = w
         height = h
         draw()
@@ -154,6 +175,9 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
         gl.post { try { block() } finally { done.countDown() } }
         done.await(2, TimeUnit.SECONDS)
     }
+
+    /** Frames keep coming, so the next one draws whatever changed. */
+    private fun playing() = SystemClock.uptimeMillis() - frameAt < 100
 
     private fun requestDraw() {
         if (queued.compareAndSet(false, true)) gl.post { queued.set(false); draw() }
@@ -184,7 +208,16 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
             val st = SurfaceTexture(textures[slot])
-            st.setOnFrameAvailableListener({ newFrame[slot] = true; requestDraw() }, gl)
+            st.setOnFrameAvailableListener({
+                val now = SystemClock.uptimeMillis()
+                frameAt = now
+                if (slot == front) frontAt = now
+                newFrame[slot] = true
+                // In a crossfade both players send frames. Only the front one's draw: drawing on both doubled the draws,
+                // at about 16 ms each. The other's frame is still taken at once, or its player stalls waiting for its
+                // buffers back, and when the front one pauses too the video freezes for good.
+                if (slot == front || now - frontAt > 100) requestDraw() else take(slot)
+            }, gl)
             frames[slot] = st
             Surface(st)
         }
@@ -197,17 +230,8 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
 
     private fun draw() {
         if (display == EGL14.EGL_NO_DISPLAY) return
-        for (slot in 0..1) {
-            val st = frames[slot] ?: return
-            if (!newFrame[slot]) continue
-            // Taken even without a window, or the player stalls waiting for its buffers back.
-            EGL14.eglMakeCurrent(display, if (window != EGL14.EGL_NO_SURFACE) window else idle,
-                if (window != EGL14.EGL_NO_SURFACE) window else idle, context)
-            newFrame[slot] = false
-            try { st.updateTexImage() } catch (_: RuntimeException) { continue }
-            st.getTransformMatrix(texMatrix[slot])
-            hasFrame[slot] = true
-        }
+        val fresh = newFrame[front]
+        for (slot in 0..1) take(slot)
         // The new loop's frames keep coming during a fade, and each one draws the next step.
         if (fadeFrom >= 0 && (!hasFrame[fadeFrom] || SystemClock.uptimeMillis() - fadeStart >= fadeMs)) fadeFrom = -1
         val fading = fadeFrom >= 0
@@ -249,7 +273,62 @@ internal class LiquidVideo(val view: SurfaceView) : SurfaceHolder.Callback {
                 }
             }
         }
+        if (fresh) present()
         EGL14.eglSwapBuffers(display, window)
+    }
+
+    /**
+     * Takes [slot]'s new frame into its texture. Taken even without a window, or the player stalls waiting for its
+     * buffers back.
+     */
+    private fun take(slot: Int) {
+        val st = frames[slot] ?: return
+        if (display == EGL14.EGL_NO_DISPLAY || !newFrame[slot]) return
+        EGL14.eglMakeCurrent(display, if (window != EGL14.EGL_NO_SURFACE) window else idle,
+            if (window != EGL14.EGL_NO_SURFACE) window else idle, context)
+        newFrame[slot] = false
+        try { st.updateTexImage() } catch (_: RuntimeException) { return }
+        st.getTransformMatrix(texMatrix[slot])
+        hasFrame[slot] = true
+        if (slot == front) took(st.timestamp)
+    }
+
+    /** Notes when the front input's frame arrived and how far apart the decoder spaces its frames. */
+    private fun took(stamp: Long) {
+        arrivedNs = System.nanoTime()
+        val gap = stamp - lastStamp
+        if (lastStamp > 0 && gap in 5_000_000L..200_000_000L) interval = if (interval == 0.0) gap.toDouble() else interval * 0.9 + gap * 0.1
+        lastStamp = stamp
+        if (!vsyncAsked && arrivedNs - vsync > 1_000_000_000L) {
+            vsyncAsked = true
+            Choreographer.getInstance().postFrameCallback { vsync = it; vsyncAsked = false }
+        }
+    }
+
+    /**
+     * Asks for the frame about to be swapped to show two refreshes after it arrived. Shown as soon as possible, a
+     * frame missed its refresh whenever the home screen kept the GPU busy.
+     *
+     * A video whose frames last a whole number of refreshes (30 fps on 60 Hz) keeps an exact cadence: each frame shows
+     * that many refreshes after the last one. The decoder's timing wanders by about 10 ms over a minute. Following it
+     * frame by frame made frames near a refresh boundary flip between two refreshes. The cadence moves only when a
+     * frame would show less than 1.3 or more than 3.4 refreshes after it arrived. Other frame rates (24 fps) show two
+     * refreshes after they arrive.
+     */
+    private fun present() {
+        val p = period
+        val steps = Math.round(interval / p)
+        val whole = steps >= 1 && kotlin.math.abs(interval / p - steps) < 0.1 && vsync > 0
+        var t = target + steps * p
+        val ahead = t - arrivedNs
+        if (!whole) t = arrivedNs + 2 * p
+        else if (target == 0L || ahead < p * 13 / 10 || ahead > p * 34 / 10) {
+            // Back to two refreshes after arrival, in the middle of a refresh so small timing errors don't move it.
+            val n = Math.round((arrivedNs + 2 * p - vsync - p / 2).toDouble() / p)
+            t = vsync + n * p + p / 2
+        }
+        target = t
+        EGLExt.eglPresentationTimeANDROID(display, window, t)
     }
 
     private fun use(p: Int) {
