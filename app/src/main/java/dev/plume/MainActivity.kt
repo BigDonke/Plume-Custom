@@ -1328,11 +1328,10 @@ class MainActivity : Activity() {
     private val glassSurfaces = ArrayList<java.lang.ref.WeakReference<GlassDrawable>>()
 
     /** A glass surface in this theme: the blurred wallpaper under it, a tint, a hairline rim and a little light on top. */
-    private fun glassSurface(round: Float, flatRight: Boolean = false): GlassBox = GlassBox(this).also { styleGlass(it.glass, round, flatRight) }
+    private fun glassSurface(round: Float): GlassBox = GlassBox(this).also { styleGlass(it.glass, round) }
 
-    private fun styleGlass(g: GlassDrawable, round: Float, flatRight: Boolean = false) {
+    private fun styleGlass(g: GlassDrawable, round: Float) {
         g.round = round
-        g.flatRight = flatRight
         g.ref = findViewById(R.id.root) // the wallpaper the blur shows, also for a menu in its own window
         g.wash = glassLook().wash()
         g.highlight = if (dark) 0x26FFFFFF else 0x66FFFFFF
@@ -2776,7 +2775,6 @@ class MainActivity : Activity() {
 
     private fun showPanel() {
         panelFrom = currentFocus
-        // Dark: true black, set apart from the home screen by a hairline on its left edge.
         showPanelGlass()
         findViewById<TextView>(R.id.settingsTitle).apply { setTextColor(focusInk()); panelShadow() }
         for (id in listOf(R.id.settingsCrumb, R.id.settingsHelp)) findViewById<TextView>(id).apply { setTextColor(valueInk()); panelShadow() }
@@ -2786,25 +2784,30 @@ class MainActivity : Activity() {
         homeFocusable(false)
     }
 
-    /** The panel is frosted glass over the wallpaper when Glass is on, and the plain surface otherwise. */
+    /**
+     * The panel floats over the home screen with a margin on every side and all four corners round. It is frosted
+     * glass over the wallpaper when Glass is on, and the plain surface otherwise.
+     */
     private fun showPanelGlass() {
         val panel = findViewById<GlassBox>(R.id.settingsPanel)
+        val round = dp(PANEL_CORNER).toFloat()
         if (glassActive()) {
             panel.background = null
             panel.setWillNotDraw(false)
-            styleGlass(panel.glass, dp(22).toFloat(), flatRight = true)
+            styleGlass(panel.glass, round)
             // Over a video the panel is clear glass like the tiles, drawn with the video under the home screen.
             panel.glass.live = { glass.panelLive(panel) }
-            glass.setPanel(panel, dp(22).toFloat())
+            glass.setPanel(panel, round)
         } else {
             panel.glass.live = null
             glass.setPanel(null, 0f)
             panel.setWillNotDraw(true)
-            panel.background = if (!dark) ColorDrawable(0xFFF7F8FA.toInt())
-                else LayerDrawable(arrayOf(ColorDrawable(DARK_BG), ColorDrawable(PANEL_EDGE))).apply {
-                    setLayerGravity(1, Gravity.START or Gravity.FILL_VERTICAL)
-                    setLayerWidth(1, 1)
-                }
+            // Dark: true black, set apart from the home screen by a hairline all round.
+            panel.background = GradientDrawable().apply {
+                cornerRadius = round
+                setColor(if (dark) DARK_BG else 0xFFF7F8FA.toInt())
+                if (dark) setStroke(1, PANEL_EDGE)
+            }
         }
         panel.invalidate()
         if (settingsScrim.background === spotlight) spotlight.invalidateSelf()
@@ -3248,7 +3251,7 @@ class MainActivity : Activity() {
         rows.forEachIndexed { i, (name, value, action) ->
             val style = styles.getOrNull(i)
             settingsList.addView(settingsRow(name, value, steps.getOrNull(i), style, action),
-                LinearLayout.LayoutParams(MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { if (style?.header != true) topMargin = dp(4) })
+                LinearLayout.LayoutParams(MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { if (style?.header != true) topMargin = dp(2) })
         }
         // Focus wraps: Up from the first row goes to the last, Down from the last to the first. Group titles are skipped.
         (settingsList.parent as View).scrollTo(0, 0)
@@ -3524,7 +3527,7 @@ class MainActivity : Activity() {
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         setTextColor(valueInk())
         panelShadow()
-        setPadding(dp(16), dp(18), dp(16), dp(4))
+        setPadding(dp(16), dp(12), dp(16), dp(4))
     }
 
     /** Focus fades the plate in and lights the row; the row's own parts restyle themselves in [onFocus]. */
@@ -3560,17 +3563,17 @@ class MainActivity : Activity() {
         // Choices that would squeeze the title go under it, across the row.
         val stacked = style?.art != null || options != null && (options.size > 2 || title.length + options.sumOf { it.first.length } > 26)
         val restyle = mutableListOf<(Boolean) -> Unit>()
-        val name = label(title, 16f).apply { setTextColor(restInk()); panelShadow() }
+        val name = label(title, 15f).apply { setTextColor(restInk()); panelShadow() }
         val sub = style?.sub?.let { label(it, 13f).apply { setTextColor(valueInk()); panelShadow() } }
-        val iconView = style?.icon?.let { icon(it, 24, iconInk(false)) }
+        val iconView = style?.icon?.let { icon(it, 22, iconInk(false)) }
         val line = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            iconView?.let { addView(it, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(16) }) }
+            iconView?.let { addView(it, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(14) }) }
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(name)
-                sub?.let { addView(it, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = dp(2) }) }
+                sub?.let { addView(it, LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = dp(1) }) }
             }, LinearLayout.LayoutParams(0, wrap, 1f))
         }
         val end = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -3598,7 +3601,7 @@ class MainActivity : Activity() {
                 val opens = value.endsWith("›") // a row that opens a page ends in a chevron, not the "›" character
                 val text = value.removeSuffix("›").trim()
                 if (text.isNotEmpty()) {
-                    val shown = label(text, 15f).apply { setTextColor(valueInk()); panelShadow() }
+                    val shown = label(text, 14f).apply { setTextColor(valueInk()); panelShadow() }
                     end.addView(shown, LinearLayout.LayoutParams(wrap, wrap).apply { marginStart = dp(16) })
                     restyle += { f ->
                         shown.setTextColor(valueInk(f))
@@ -3616,10 +3619,10 @@ class MainActivity : Activity() {
             id = View.generateViewId()
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(if (stacked) 12 else 6), dp(16), dp(if (stacked) 14 else 6))
-            minimumHeight = dp(if (sub != null) 68 else 56)
+            setPadding(dp(14), dp(if (stacked) 10 else 5), dp(14), dp(if (stacked) 11 else 5))
+            minimumHeight = dp(if (sub != null) 54 else 44)
             addView(line, LinearLayout.LayoutParams(MATCH_PARENT, wrap))
-            below?.let { addView(it, LinearLayout.LayoutParams(MATCH_PARENT, wrap).apply { topMargin = dp(10); marginStart = if (iconView != null) dp(40) else 0 }) }
+            below?.let { addView(it, LinearLayout.LayoutParams(MATCH_PARENT, wrap).apply { topMargin = dp(8); marginStart = if (iconView != null) dp(36) else 0 }) }
             setOnClickListener { action() }
             panelFocus(this, 12, style?.help, style?.area) { focused ->
                 // The title glides to bright rather than snapping, so moving through the list feels smooth.
@@ -3638,29 +3641,25 @@ class MainActivity : Activity() {
 
     private fun arrow(res: Int, color: Int) = getDrawable(res)!!.mutate().apply { setBounds(0, 0, dp(18), dp(18)); setTint(color) }
 
-    /** The wallpaper as a big picture at the top of the main list, its name under it: what people change most. */
+    /** The wallpaper as a picture at the top of the main list, its name beside it: what people change most. */
     private fun heroRow(title: String, name: String, style: RowStyle, action: () -> Unit): View {
         val (choice, forDark) = style.thumb!!
-        val t = label(title, 16f).apply { setTextColor(restInk()); panelShadow() }
+        val t = label(title, 15f).apply { setTextColor(restInk()); panelShadow() }
         val n = label(name, 13f).apply { setTextColor(valueInk()); panelShadow() }
         val chevron = icon(R.drawable.ms_chevron_right, 22, valueInk())
         return LinearLayout(this).apply {
             id = View.generateViewId()
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(8), dp(8), dp(10))
-            addView(wallpaperThumb(choice, forDark, big = true), LinearLayout.LayoutParams(MATCH_PARENT, dp(64)))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(8), dp(14), dp(8))
+            addView(wallpaperThumb(choice, forDark, big = true), LinearLayout.LayoutParams(dp(112), dp(63)))
             addView(LinearLayout(context).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(8), dp(10), dp(4), 0)
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(t)
-                    addView(n)
-                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                addView(chevron)
-            }, LinearLayout.LayoutParams(MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                orientation = LinearLayout.VERTICAL
+                addView(t)
+                addView(n, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(1) })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) })
+            addView(chevron)
             setOnClickListener { action() }
-            panelFocus(this, 18, style.help, style.area) { f ->
+            panelFocus(this, 16, style.help, style.area) { f ->
                 t.setTextColor(if (f) focusInk() else restInk())
                 n.setTextColor(valueInk(f))
                 chevron.setColorFilter(valueInk(f))
@@ -3744,7 +3743,7 @@ class MainActivity : Activity() {
     /** A small picture of a wallpaper (plain ones are their colour), decoded small off the UI thread; [big] for the hero card. */
     private fun wallpaperThumb(choice: String, forDark: Boolean, big: Boolean = false) = ImageView(this).apply {
         background = GradientDrawable().apply {
-            cornerRadius = dp(if (big) 14 else 8).toFloat()
+            cornerRadius = dp(if (big) 10 else 8).toFloat()
             setColor(if (choice.startsWith("plain:")) (if (forDark) DARK_BG else 0xFFF3F5F7.toInt()) else ink(.08f))
             setStroke(1, ink(.16f))
         }
@@ -7000,7 +6999,8 @@ class MainActivity : Activity() {
         const val RIM_SIDE = 0x0AFFFFFF // white 4%
         const val RIM_TOP_LIT = 0x38FFFFFF // white 22%
         const val RIM_SIDE_LIT = 0x17FFFFFF
-        const val PANEL_EDGE = 0x0FFFFFFF // white 6%, the settings panel's left edge
+        const val PANEL_EDGE = 0x0FFFFFFF // white 6%, the settings panel's rim
+        const val PANEL_CORNER = 24 // dp, the settings panel's corners
         const val HELP_URL = "https://github.com/aradhyas8/Plume_Launcher#home-button-on-android-13-and-newer"
         const val TOGGLE_ON = "\u0000on" // row values drawn as a switch instead of text
         const val TOGGLE_OFF = "\u0000off"

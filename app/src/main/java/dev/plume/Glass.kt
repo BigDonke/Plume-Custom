@@ -613,9 +613,8 @@ internal class GlassLayer(context: Context) : View(context) {
             return
         }
         if (liveOn && liveTiles.size < (tiles.size + 1) * LiquidVideo.TILE) liveTiles = FloatArray((tiles.size + 1) * LiquidVideo.TILE)
-        // The panel's middle only tints what is drawn under it, so the tiles' glass stops at its left edge.
+        // The panel's middle only tints what is drawn under it, so the tiles' glass stops at its edge.
         val panelGlass = if (liveOn) panelRecord(glassGl!!) else FloatArray(0)
-        val panelLeft = if (panelGlass.isEmpty()) Float.MAX_VALUE else panelGlass[6]
         val s = shader
         // A new viewport can need smaller images to stay within the shared memory limit.
         var needsBake = false
@@ -680,10 +679,21 @@ internal class GlassLayer(context: Context) : View(context) {
                 liveTiles[o + 3] = rect.height() / 2
                 liveTiles[o + 4] = minOf(rx, ry)
                 liveTiles[o + 5] = alpha / 255f
-                liveTiles[o + 6] = visible.left - liquidAt[0].toFloat()
-                liveTiles[o + 7] = visible.top - liquidAt[1].toFloat()
-                liveTiles[o + 8] = minOf(visible.right - liquidAt[0].toFloat(), panelLeft)
-                liveTiles[o + 9] = visible.bottom - liquidAt[1].toFloat()
+                var cl = visible.left - liquidAt[0].toFloat()
+                var ct = visible.top - liquidAt[1].toFloat()
+                var cr = visible.right - liquidAt[0].toFloat()
+                var cb = visible.bottom - liquidAt[1].toFloat()
+                // The panel floats with a margin round it: a tile beside it stops at its left edge, one above or below
+                // it (a top bar disc) at its top or bottom edge.
+                if (panelGlass.isNotEmpty() && cr > panelGlass[6] && cl < panelGlass[8] && cb > panelGlass[7] && ct < panelGlass[9]) {
+                    if (cl < panelGlass[6]) cr = panelGlass[6]
+                    else if (ct < panelGlass[7]) cb = panelGlass[7]
+                    else ct = maxOf(ct, panelGlass[9])
+                }
+                liveTiles[o + 6] = cl
+                liveTiles[o + 7] = ct
+                liveTiles[o + 8] = cr
+                liveTiles[o + 9] = cb
                 liveTiles[o + 10] = LIVE_TINT
                 liveTiles[o + 11] = 1.06f
             } else if (sh != null) {
@@ -748,7 +758,7 @@ internal class GlassLayer(context: Context) : View(context) {
         v.getLocationInWindow(at)
         val l = (at[0] - liquidAt[0]).toFloat()
         val t = (at[1] - liquidAt[1]).toFloat()
-        val r = l + v.width + panelRound // the right corners off the screen, as GlassDrawable.flatRight
+        val r = l + v.width
         val b = t + v.height
         return floatArrayOf((l + r) / 2, (t + b) / 2, (r - l) / 2, (b - t) / 2, panelRound, 1f,
             l, t, minOf(r, gl.view.width.toFloat()), b, LIVE_PANEL_TINT, 1f) // no magnifying: it is large
@@ -855,7 +865,7 @@ internal fun glassMapping(screenW: Int, screenH: Int, x: Int, y: Int) =
  * The look of a frosted surface: the blurred wallpaper that is under the [host] view, at the host's own place, then a
  * tint (dark or white) and a little light on the top edge, with no outline. The blur is the one the tiles use, so
  * nothing is blurred again, and what is behind the surface (tiles, cards) does not show through the text.
- * [round] is the corner radius, [flatRight]: the right corners run off the screen (a panel along the right edge).
+ * [round] is the corner radius.
  * [ref] is the view whose wallpaper the blur shows (the activity root), so a surface in another window (a menu, a
  * dialog) still finds its place in the same blur. Until there is a blur (a card opened at start), the tint is solid.
  */
@@ -875,7 +885,6 @@ internal class GlassDrawable(private val host: View) : android.graphics.drawable
     private var shader: BitmapShader? = null
     private var gloss: android.graphics.LinearGradient? = null
     var round = 0f
-    var flatRight = false
     var ref: View? = null // the view the blur was made for; its size and place fix the mapping
     var wash = 0
     var highlight = 0 // white at the top edge, fading out: the light of the glass
@@ -906,7 +915,6 @@ internal class GlassDrawable(private val host: View) : android.graphics.drawable
 
     override fun draw(c: Canvas) {
         rect.set(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat())
-        if (flatRight) rect.right += round
         // Clears the window down to the video, where LiquidVideo draws this surface's glass.
         if (live?.invoke() == true) {
             c.drawRoundRect(rect, round, round, holePaint)

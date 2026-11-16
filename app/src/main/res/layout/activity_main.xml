@@ -346,7 +346,7 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- Launcher settings: side panel over a dimmed home screen; Back closes it. -->
+    <!-- Launcher settings: a panel floating over a dimmed home screen, under the top bar like a menu bar dropdown; Back closes it. -->
     <FrameLayout
         android:id="@+id/settingsScrim"
         android:layout_width="match_parent"
@@ -357,14 +357,17 @@
 
         <dev.plume.GlassBox
             android:id="@+id/settingsPanel"
-            android:layout_width="440dp"
+            android:layout_width="400dp"
             android:layout_height="match_parent"
             android:layout_gravity="end"
+            android:layout_marginTop="80dp"
+            android:layout_marginEnd="48dp"
+            android:layout_marginBottom="40dp"
             android:orientation="vertical"
-            android:paddingStart="28dp"
-            android:paddingTop="40dp"
-            android:paddingEnd="40dp"
-            android:paddingBottom="16dp">
+            android:paddingStart="18dp"
+            android:paddingTop="22dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="12dp">
 
             <!-- "Plume settings ›" above a section's title, so you know where Back goes. -->
             <TextView
@@ -382,14 +385,16 @@
                 android:fontFamily="sans-serif-medium"
                 android:paddingStart="14dp"
                 android:text="@string/plume_settings"
-                android:textSize="24sp" />
+                android:textSize="20sp" />
 
             <!-- Scrolls once the rows outgrow the screen; focus moving down scrolls it along. -->
             <ScrollView
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="10dp"
                 android:layout_weight="1"
+                android:fadingEdgeLength="28dp"
+                android:requiresFadingEdge="vertical"
                 android:scrollbars="none">
 
                 <LinearLayout
@@ -404,14 +409,14 @@
                 android:id="@+id/settingsHelp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:lineSpacingMultiplier="1.15"
+                android:layout_marginTop="4dp"
+                android:lineSpacingMultiplier="1.1"
                 android:ellipsize="end"
                 android:maxLines="3"
                 android:minLines="3"
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
         </dev.plume.GlassBox>
     </FrameLayout>
 </FrameLayout>
