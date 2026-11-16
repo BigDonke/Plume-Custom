@@ -3915,10 +3915,37 @@ class MainActivity : Activity() {
         emptyList()
     }
 
+    // The TV adds, drops and re-adds HDMI ports as it wakes or sleeps. Rebuilding the row lifts the focused tile again,
+    // so wait for the burst to end and rebuild only when a pinned input changed.
     private val inputCallback = object : TvInputManager.TvInputCallback() {
-        override fun onInputAdded(id: String) = refreshApps()
-        override fun onInputRemoved(id: String) = refreshApps()
-        override fun onInputStateChanged(id: String, state: Int) = refreshApps()
+        override fun onInputAdded(id: String) = inputsChanged()
+        override fun onInputRemoved(id: String) = inputsChanged()
+        override fun onInputStateChanged(id: String, state: Int) = inputsChanged()
+    }
+    private val readInputs = Runnable { refreshInputs() }
+
+    private fun inputsChanged() {
+        ui.removeCallbacks(readInputs)
+        ui.postDelayed(readInputs, 300L)
+    }
+
+    private fun refreshInputs() {
+        io.execute {
+            val inputs = hdmiInputs()
+            ui.post {
+                if (isDestroyed) return@post
+                fun pinned() = sources.filter { it.pkg in pinnedInputs() }.map { it.pkg to it.label }
+                val row = pinned()
+                val bar = hasSources()
+                sources = inputs
+                SOURCES = inputs
+                if (bar != hasSources() && movingTop == null) applyTopBar()
+                if (pinned() != row) {
+                    renderApps()
+                    if (allApps.visibility == View.VISIBLE) openAllApps(recentAppsOpen)
+                }
+            }
+        }
     }
 
     /** HDMI inputs pinned to the home row by hand (hold OK in the Sources list): shown with or without a signal. */
