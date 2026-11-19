@@ -2,17 +2,16 @@
   <img src="docs/plume-icon.png" alt="Plume logo" width="128">
 </p>
 
-<h1 align="center">Plume Launcher</h1>
+<h1 align="center">Plume Custom</h1>
 
 <p align="center">
   <em>Light as a feather.</em> A minimal, ad-free home screen for Android TV and Google TV.
 </p>
 
 <p align="center">
-  <a href="https://github.com/aradhyas8/Plume_Launcher/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/aradhyas8/Plume_Launcher?label=release"></a>
+  <a href="https://github.com/BigDonke/Plume-Custom/releases">Fork releases</a>
   <img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-3ddc84">
   <img alt="APK size" src="https://img.shields.io/badge/APK-0.4%20MB-blue">
-  <a href="https://github.com/aradhyas8/Plume_Launcher/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/aradhyas8/Plume_Launcher/total"></a>
   <a href="LICENSE"><img alt="GPL-3.0 License" src="https://img.shields.io/github/license/aradhyas8/Plume_Launcher"></a>
 </p>
 
@@ -69,13 +68,14 @@ Measured on a Hisense Google TV (Android 12, 1.8 GB RAM):
 
 You need Android TV or Google TV on **Android 8.0 or newer**.
 
-1. Install the latest APK from [Releases](https://github.com/aradhyas8/Plume_Launcher/releases/latest):
-   - **Downloader app:** enter code **`2125356`**. It always points to the latest release.
+1. Sign in to GitHub with access to this fork and download `Plume-Custom.apk` from [Releases](https://github.com/BigDonke/Plume-Custom/releases).
    - **USB drive:** copy the APK over and open it with a file manager.
-   - **adb:** `adb install Plume-<version>.apk`
-2. Open **Plume** from your apps. Plume settings opens and shows a **Finish setup** card.
+   - **adb:** `adb install -r Plume-Custom.apk`
+2. Open **Plume Custom** from your apps. Plume settings opens and shows a **Finish setup** card.
 3. Allow the **TV listings** permission when asked. Continue Watching needs it.
 4. Make the Home button open Plume. Find your TV below.
+
+After installing a build with an update feed, use **Plume settings → Updates**. See [release delivery](docs/releases.md) for building and publishing those APKs.
 
 ### Make Home open Plume
 
@@ -257,9 +257,9 @@ Without the Home button service, the history includes only apps opened from Plum
 
 Plume has no analytics, no ads and no account. It only connects to the internet to:
 - load poster images for your Continue Watching items
-- check this repository's GitHub releases for a new version, once a day, and download it when you choose to update
-- download the Gallery paintings from this repository, **only if you choose that screensaver**
-- check this repository for wallpapers **when you open Built-in**. Plume updates photos you already downloaded. New photos download only when you select them.
+- check the configured update server once a day while Plume is in use and download the fork's APK when you choose to update
+- download the upstream Gallery paintings, **only if you choose that screensaver**
+- check the upstream wallpaper catalog **when you open Built-in**. Plume updates photos you already downloaded. New photos download only when you select them.
 - get the Bing picture of the day (about 300 KB), **only if you choose it as your wallpaper**. Plume sends a request to [bing.com](https://www.bing.com) when the home screen opens: once a day, or once an hour until the picture has changed that day. Bing sees the TV's IP address and its language and country. Plume keeps one picture and deletes it when you choose another wallpaper.
 - find artwork through [TMDB](https://www.themoviedb.org) **only if you add an API key and use Your shows**. TMDB receives the key to authenticate requests and the show title when Plume needs a backdrop. Plume stores the key on the TV and excludes it from backups. The QR form sends it over unencrypted HTTP on your local network. Select **Turn off TMDB and remove key** to stop lookups.
 - download one NASA Earth video from [svs.gsfc.nasa.gov](https://svs.gsfc.nasa.gov/4019), **only when you select that scene**. NASA sees the TV's IP address.
@@ -293,12 +293,12 @@ Google TV hides third-party screensavers from its own settings, so Plume needs t
 ## Building from source
 
 ```sh
-git clone https://github.com/aradhyas8/Plume_Launcher.git
-cd Plume_Launcher
+git clone https://github.com/BigDonke/Plume-Custom.git
+cd 23_plume_modified
 ./gradlew assembleRelease
 ```
 
-The APK is written to `app/build/outputs/apk/release/`. Without a `keystore.properties` file, release builds are signed with your local debug key, which is fine for installing your own build.
+The APK is written to `app/build/outputs/apk/release/`. Without `keystore.properties`, Gradle signs the APK with your local debug key. To upgrade an existing installation, [use its signing key](docs/releases.md).
 
 ## Contributing
 
