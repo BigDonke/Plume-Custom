@@ -129,17 +129,6 @@ internal fun sunPlace(prefs: SharedPreferences) =
 internal fun autoDark(place: Pair<Double, Double>?, now: Long, hour: Int) =
     if (place == null) hour !in 7..18 else Sun.dark(place.first, place.second, now)
 
-/** "1.10" > "1.9" > "1.2.1" > "1.2": compared number by number, missing parts count as 0. */
-internal fun newerVersion(a: String, b: String): Boolean {
-    val x = a.split('.').map { it.toIntOrNull() ?: 0 }
-    val y = b.split('.').map { it.toIntOrNull() ?: 0 }
-    for (i in 0 until maxOf(x.size, y.size)) {
-        val d = x.getOrElse(i) { 0 } - y.getOrElse(i) { 0 }
-        if (d != 0) return d > 0
-    }
-    return false
-}
-
 /** "external" covers every attached volume (USB drives too) from Android 10; before that only the main one. */
 internal val PHOTOS: Uri by lazy { // lazy: unit tests load this file without Android
     if (Build.VERSION.SDK_INT >= 29) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -1866,7 +1855,7 @@ class MainActivity : Activity() {
                 var updateFailed = false
                 val catalog = try {
                     // shortcut: GitHub's directory API supports 1,000 entries; use the tree API for a larger pack.
-                    val entries = org.json.JSONArray(openStream("https://api.github.com/repos/$REPO/contents/wallpapers?ref=main").use { it.readBytes().decodeToString() })
+                    val entries = org.json.JSONArray(openStream("https://api.github.com/repos/$WALLPAPER_REPO/contents/wallpapers?ref=main").use { it.readBytes().decodeToString() })
                     require(entries.length() < 1000)
                     val photos = (0 until entries.length()).mapNotNull { i ->
                         val entry = entries.getJSONObject(i)
@@ -2926,6 +2915,7 @@ class MainActivity : Activity() {
                 renderSettings(R.string.glass)
             },
         )
+        val update = availableUpdate()
         val rows = linkedMapOf<Int, Triple<String, String, () -> Unit>>(
             R.string.edit_apps_row to Triple(getString(R.string.edit_apps_row), "") { closeLauncherSettings(); startEdit(grab = null) },
             R.string.theme to Triple(getString(R.string.theme), getString(mapOf("light" to R.string.theme_light, "dark" to R.string.theme_dark, "wallpaper" to R.string.theme_wallpaper, "auto" to R.string.theme_auto)[theme] ?: R.string.theme_light)) {
@@ -3035,7 +3025,7 @@ class MainActivity : Activity() {
             R.string.updates to Triple(getString(R.string.updates), when {
                 updating -> getString(R.string.updating)
                 checking -> getString(R.string.checking)
-                availableUpdate() != null -> getString(R.string.update_available_row, availableUpdate())
+                update != null -> getString(R.string.update_available_row, update.versionName)
                 notesUnseen() -> getString(R.string.whats_new_title, myVersion())
                 else -> getString(R.string.up_to_date_row, myVersion())
             }) { showUpdates() },
@@ -5630,7 +5620,7 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- updates (GitHub releases) ----------
+    // ---------- updates (fork releases) ----------
     // Checked once a day from the home screen; a new version is announced once, then waits in settings.
     // The APK goes to a file in the cache, then into an install session. TVs without the confirm box open that file in
     // their own installer (see ApkProvider). The file is deleted when an update fails or is cancelled, and by the new
@@ -5638,34 +5628,50 @@ class MainActivity : Activity() {
 
     @Volatile private var checking = false
     @Volatile private var updating = false
+    private val updateFeedUrl by lazy { getString(R.string.update_feed_url) }
+    private val updatePrefs by lazy { getSharedPreferences("updates", MODE_PRIVATE) }
+    @Suppress("DEPRECATION")
+    private val installedVersionCode by lazy { packageManager.getPackageInfo(packageName, 0).versionCode }
 
     private fun myVersion() = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
 
-    /** The newer version a check found, if any (null again once it's installed). Never in the custom build. */
-    private fun availableUpdate() = prefs.getString("upd_ver", null)?.takeIf { UPDATES && newerVersion(it, myVersion()) }
+    private fun availableUpdate(): ReleaseUpdate? {
+        if (updateFeedUrl.isEmpty() || updatePrefs.getString("feed", null) != updateFeedUrl) return null
+        return updatePrefs.getString("manifest", null)?.let(ReleaseUpdate::parse)?.takeIf { it.isNewerThan(installedVersionCode) }
+    }
 
     private fun checkUpdate(force: Boolean) {
-        if (!UPDATES) return
-        if (checking || !force && System.currentTimeMillis() - prefs.getLong("upd_time", 0) < 24 * 3600_000L) return
+        if (updateFeedUrl.isEmpty() || checking) return
+        val sameFeed = updatePrefs.getString("feed", null) == updateFeedUrl
+        if (!force && sameFeed && System.currentTimeMillis() - updatePrefs.getLong("checked_at", 0) < 24 * 3600_000L) return
         checking = true
         if (force) renderSettings(R.string.updates)
         io.execute {
-            val latest = try {
-                getJson("https://api.github.com/repos/$REPO/releases/latest").getString("tag_name").removePrefix("v")
+            val manifest = try {
+                openStream(updateFeedUrl).bufferedReader().use { it.readText() }.also {
+                    if (ReleaseUpdate.parse(it) == null) throw IOException("invalid update manifest")
+                }
             } catch (e: Exception) {
                 android.util.Log.w("Plume", "update check failed ($e)")
                 null
             }
-            if (latest != null) prefs.edit().putString("upd_ver", latest).putLong("upd_time", System.currentTimeMillis()).apply()
             ui.post {
                 if (isDestroyed) return@post
                 checking = false
-                val ver = availableUpdate()
-                if (ver != null && (force || prefs.getString("upd_told", null) != ver)) {
-                    prefs.edit().putString("upd_told", ver).apply()
-                    if (!force) toast(getString(R.string.update_available_toast, ver), long = true)
+                val edit = updatePrefs.edit().putString("feed", updateFeedUrl).putLong("checked_at", System.currentTimeMillis())
+                if (!sameFeed) edit.remove("manifest").remove("notified_code")
+                if (manifest != null) edit.putString("manifest", manifest)
+                edit.apply()
+                if (manifest != null) {
+                    val update = availableUpdate()
+                    if (update != null && updatePrefs.getInt("notified_code", 0) != update.versionCode) {
+                        updatePrefs.edit().putInt("notified_code", update.versionCode).apply()
+                        if (!force) toast(getString(R.string.update_available_toast, update.versionName), long = true)
+                    } else if (force && update == null) {
+                        toast(getString(R.string.up_to_date_toast))
+                    }
                 } else if (force) {
-                    toast(if (latest == null) getString(R.string.update_check_failed) else getString(R.string.up_to_date_toast))
+                    toast(getString(R.string.update_check_failed))
                 }
                 updateBadge()
                 if (settingsScrim.visibility == View.VISIBLE) renderSettings(R.string.updates)
@@ -5738,10 +5744,10 @@ class MainActivity : Activity() {
     private fun showUpdates() {
         prefs.edit().putString("seen_notes", myVersion()).apply()
         updateBadge()
-        val ver = availableUpdate()
+        val update = availableUpdate()
         showPage(getString(R.string.whats_new_title, myVersion()), listOfNotNull(
-            if (ver != null) page(getString(R.string.install_update, ver)) { installUpdate(ver) }
-            else if (UPDATES) page(getString(R.string.check_updates)) { checkUpdate(force = true) } else null,
+            if (update != null) page(getString(R.string.install_update, update.versionName)) { installUpdate(update) }
+            else if (updateFeedUrl.isNotEmpty()) page(getString(R.string.check_updates)) { checkUpdate(force = true) } else null,
         ), back = { renderSettings(R.string.updates) })
         // Focusable, lit on focus, so Down walks through notes longer than the panel and it scrolls along.
         getString(R.string.whats_new).split('\n').forEach {
@@ -5797,7 +5803,8 @@ class MainActivity : Activity() {
         icon.overlay.add(badge)
     }
 
-    private fun installUpdate(ver: String) {
+    @Suppress("DEPRECATION")
+    private fun installUpdate(update: ReleaseUpdate) {
         if (updating) return
         if (!packageManager.canRequestPackageInstalls()) {
             toast(getString(R.string.allow_installs), long = true, system = true)
@@ -5810,8 +5817,13 @@ class MainActivity : Activity() {
         io.execute {
             val ok = try {
                 apk.delete()
-                openStream("https://github.com/$REPO/releases/download/v$ver/Plume.apk").use { input ->
+                openStream(update.apkUrl(updateFeedUrl)).use { input ->
                     apk.outputStream().use { input.copyTo(it) }
+                }
+                if (!apk.inputStream().use(update::matchesApk)) throw IOException("update checksum mismatch")
+                val candidate = packageManager.getPackageArchiveInfo(apk.path, 0)
+                if (candidate?.packageName != packageName || candidate.versionCode != update.versionCode) {
+                    throw IOException("update package or version does not match the release")
                 }
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
                 params.setAppPackageName(packageName)
@@ -7080,9 +7092,7 @@ class MainActivity : Activity() {
             60 to R.string.every_60, 1440 to R.string.every_1440,
         )
         const val CHOSEN = "✓"
-        const val REPO = "aradhyas8/Plume_Launcher"
-        /** Off in the custom build: the official Plume.apk is signed with another key and cannot replace it. */
-        const val UPDATES = false
+        const val WALLPAPER_REPO = "aradhyas8/Plume_Launcher"
         /** How long the video wallpaper keeps playing after onPause; see onPause. */
         const val VIDEO_STOP_DELAY = 500L
         const val VIDEO_REVEAL_MS = 300L

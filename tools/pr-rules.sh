@@ -1,14 +1,17 @@
 #!/bin/sh
 # pr-rules.sh BASE: checks a pull request against the rules in CONTRIBUTING, from the git diff BASE...HEAD.
-# Fails on a new library or a new permission; only warns on a missing CHANGELOG entry, since not every
-# change to the app is one a user sees. Writes a table to $GITHUB_STEP_SUMMARY when it is set.
+# Fails on new libraries and unapproved permissions. The fork's updater uses a release-only install permission.
+# Warns on a missing CHANGELOG entry. Writes a table to $GITHUB_STEP_SUMMARY when it is set.
 base=${1:?usage: pr-rules.sh BASE}
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 added() { git diff "$base"...HEAD -- "$@" | grep '^+[^+]'; }
 fail=0
 
 deps=$(added '*.gradle.kts' | grep -E '^\+\s*(implementation|api|compileOnly|runtimeOnly|ksp|kapt|annotationProcessor)\(|^\+\s*id\(')
-perms=$(added '*AndroidManifest.xml' | grep -E 'uses-permission|<permission')
+release_manifest=app/src/release/AndroidManifest.xml
+perms=$(added '*AndroidManifest.xml' ":(exclude)$release_manifest" | grep -E 'uses-permission|<permission')
+release_perms=$(added "$release_manifest" | grep -E 'uses-permission|<permission' |
+    grep -vFx '+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />')
 changed=$(git diff --name-only "$base"...HEAD -- app/src/main)
 notes=$(git diff "$base"...HEAD -- CHANGELOG.md | grep -c '^+- ')
 
@@ -27,9 +30,9 @@ else
     echo "| No new library | ✅ |" >> "$summary"
 fi
 
-if [ -n "$perms" ]; then
+if [ -n "$perms$release_perms" ]; then
     echo "::error::New permission in a manifest. Discuss it in an issue first."
-    printf '%s\n' "$perms"
+    printf '%s\n' "$perms" "$release_perms"
     echo "| No new permission | ❌ new permission |" >> "$summary"
     fail=1
 else
