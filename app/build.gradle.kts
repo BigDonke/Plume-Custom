@@ -1,7 +1,21 @@
+import java.net.URI
 import java.util.Properties
 
 plugins {
     id("com.android.application")
+}
+
+val releaseProperties = rootProject.file("keystore.properties").takeIf { it.exists() }
+    ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+val updateFeedUrl = providers.gradleProperty("plumeUpdateFeedUrl")
+    .orElse(releaseProperties?.getProperty("plumeUpdateFeedUrl").orEmpty())
+    .get()
+if (updateFeedUrl.isNotEmpty()) {
+    val feed = URI(updateFeedUrl)
+    require(feed.scheme == "https" && feed.host != null && feed.userInfo == null &&
+        feed.query == null && feed.fragment == null && feed.rawPath.endsWith("/latest.properties")) {
+        "plumeUpdateFeedUrl must be an HTTPS URL ending in /latest.properties"
+    }
 }
 
 // No dependencies on purpose: framework Views only, to keep RAM and APK size minimal.
@@ -15,9 +29,10 @@ android {
         manifestPlaceholders["appLabel"] = "Plume Custom"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.7.1"
+        versionCode = 11
+        versionName = "1.7.2"
         testInstrumentationRunner = "dev.plume.ActivityTest"
+        resValue("string", "update_feed_url", "")
         // What's new: only this version's section of CHANGELOG.md ships, one entry per line, ** marks kept for bold.
         // A ### heading ships as a line that starts with #. A fix release (1.7.1) ships its x.y section after its own,
         // so people who update from 1.6 still see what 1.7 brought.
@@ -44,14 +59,13 @@ android {
 
     // Release key lives outside the repo; keystore.properties (git-ignored) points at it. Without that file
     // (a fresh clone) release builds fall back to the debug key, so anyone can still build and sideload.
-    val keys = rootProject.file("keystore.properties").takeIf { it.exists() }
-        ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+    require(updateFeedUrl.isEmpty() || releaseProperties != null) { "Update-enabled builds require keystore.properties" }
     signingConfigs {
-        if (keys != null) create("release") {
-            storeFile = file(keys.getProperty("storeFile"))
-            storePassword = keys.getProperty("storePassword")
-            keyAlias = keys.getProperty("keyAlias")
-            keyPassword = keys.getProperty("keyPassword")
+        if (releaseProperties != null) create("release") {
+            storeFile = file(releaseProperties.getProperty("storeFile"))
+            storePassword = releaseProperties.getProperty("storePassword")
+            keyAlias = releaseProperties.getProperty("keyAlias")
+            keyPassword = releaseProperties.getProperty("keyPassword")
         }
     }
 
@@ -74,6 +88,7 @@ android {
             manifestPlaceholders["appLabel"] = "Plume Debug"
         }
         release {
+            resValue("string", "update_feed_url", updateFeedUrl)
             vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true

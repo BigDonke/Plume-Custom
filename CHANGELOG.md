@@ -53,6 +53,10 @@ Put changes that are not released under `## Unreleased`. Rename that heading to 
 - Continue Watching shows Watch Next on Philips TVs with Android 12. Before, the row stayed empty (#265).
 - Nuvio has its own mark on the app row and in Continue Watching. Before, it showed a grey square.
 
+## 1.7.2
+
+- **Plume Custom updates.** Select **Updates** to check for a new release and install it.
+
 ## 1.7.1
 
 - **Photo of the day fix.** Plume no longer closes when you select **Photo of the day** before the photo downloads.

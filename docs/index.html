@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plume Launcher</title>
-<meta name="description" content="A minimal, ad-free home screen for Android TV and Google TV. Install it with Downloader code 2125356.">
+<title>Plume Custom</title>
+<meta name="description" content="A Plume Launcher fork for Android TV and Google TV.">
 <meta name="theme-color" content="#0f1c33" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#8fc3ee" media="(prefers-color-scheme: light)">
 <link rel="icon" href="plume-icon.png">
@@ -25,12 +25,9 @@
     <h1>Light as a feather.</h1>
     <p class="lede">Your apps and what you were watching. No ads, no sponsored rows, no account. Nothing else.</p>
     <div class="cta">
-      <a class="btn" id="download" href="https://github.com/aradhyas8/Plume_Launcher/releases/latest">
+      <a class="btn" href="https://github.com/BigDonke/Plume-Custom/releases">
         <svg aria-hidden="true" class="ico" viewBox="0 0 24 24"><path d="M5,20h14v-2H5v2zM19,9h-4V3H9v6H5l7,7 7,-7z"/></svg>
-        <span>Download APK</span><span class="btn-meta" id="download-meta">0.4 MB</span>
-      </a>
-      <a class="code-chip" href="#install" aria-label="Downloader code 2125356, see install steps">
-        <span>Downloader code</span><strong>2125356</strong>
+        <span>Fork releases</span>
       </a>
     </div>
     <p class="fine">Free and open source · Android 8.0 or newer · GPL-3.0</p>
@@ -86,35 +83,20 @@
   </section>
 
   <section class="install wrap" id="install">
-    <h2>Install in a minute</h2>
-    <p class="sub">Plume isn't on the Play Store. Install it straight on your TV with the free Downloader app.</p>
-
-    <div class="install-grid">
-      <div class="panel code-panel">
-        <p class="label">Downloader code</p>
-        <div class="digits" aria-label="2 1 2 5 3 5 6"><span>2</span><span>1</span><span>2</span><span>5</span><span>3</span><span>5</span><span>6</span></div>
-        <button type="button" class="btn ghost small" data-copy="2125356">Copy code</button>
-        <p class="hint">Always points to the latest release.</p>
-      </div>
-
-      <ol class="steps">
-        <li><strong>Get Downloader</strong><span>Search the Play Store on your TV for <em>Downloader</em> by AFTVnews and install it.</span></li>
-        <li><strong>Enter the code</strong><span>Open Downloader, type <b>2125356</b> and select <em>Go</em>. Allow Downloader to install apps when asked.</span></li>
-        <li><strong>Open Plume</strong><span>Install, then open Plume from your apps. Its settings open on first launch to set the Home button and default launcher.</span></li>
-      </ol>
-    </div>
+    <h2>Install Plume Custom</h2>
+    <p class="sub">Sign in to GitHub with access to the fork and download <a href="https://github.com/BigDonke/Plume-Custom/releases">Plume-Custom.apk</a> from its releases.</p>
 
     <details class="more">
-      <summary>Other ways to install</summary>
+      <summary>Install with a USB drive or adb</summary>
       <div class="more-body">
-        <p><strong>USB drive.</strong> <a href="https://github.com/aradhyas8/Plume_Launcher/releases/latest">Download the APK</a>, copy it to a USB drive and open it with a file manager on the TV.</p>
-        <p><strong>adb.</strong> From a computer on the same network:</p>
-        <div class="cmd"><code>adb install Plume-1.7.apk</code><button type="button" class="copy-icon" data-copy="adb install Plume-1.7.apk" aria-label="Copy command"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button></div>
+        <p><strong>USB drive.</strong> Copy the APK to a USB drive and open it with a file manager on the TV.</p>
+        <p><strong>adb.</strong> Run this from a computer on the same network.</p>
+        <div class="cmd"><code>adb install -r Plume-Custom.apk</code><button type="button" class="copy-icon" data-copy="adb install -r Plume-Custom.apk" aria-label="Copy command"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button></div>
         <p><strong>Android 13 and newer.</strong> Android greys out the Home button switch for apps installed outside the Play Store. The <a href="https://github.com/aradhyas8/Plume_Launcher#home-button-on-android-13-and-newer">README explains the one-time fix</a>.</p>
       </div>
     </details>
 
-    <p class="after">After that, Plume updates itself from <b>Plume settings → Updates</b>.</p>
+    <p class="after">If your build has an update feed, check for new versions in <b>Plume settings → Updates</b>.</p>
   </section>
 </main>
 
@@ -154,20 +136,6 @@
     });
   });
 
-  // Point the download button straight at the latest APK when GitHub answers.
-  fetch('https://api.github.com/repos/aradhyas8/Plume_Launcher/releases/latest')
-    .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-    .then(function (rel) {
-      var apk = (rel.assets || []).filter(function (a) { return /\.apk$/i.test(a.name); })[0];
-      if (!apk) return;
-      document.getElementById('download').href = apk.browser_download_url;
-      document.getElementById('download-meta').textContent =
-        'v' + rel.tag_name.replace(/^v/i, '') + ' · ' + (apk.size / 1048576).toFixed(1) + ' MB';
-      var name = apk.name;
-      document.querySelectorAll('.cmd code').forEach(function (c) { c.textContent = 'adb install ' + name; });
-      document.querySelectorAll('.cmd [data-copy]').forEach(function (b) { b.dataset.copy = 'adb install ' + name; });
-    })
-    .catch(function () {});
 })();
 </script>
 </body>
