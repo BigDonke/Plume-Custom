@@ -1,0 +1,78 @@
+# A pushed version tag (v1.7.3) builds the signed release APK and publishes it as a GitHub release.
+# Plume Custom installs its updates from these releases, so the APK must be signed with the key the TVs have.
+# Repository secrets: KEYSTORE_BASE64 (the .jks file in base64), KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.ref_name }}
+      # SHA-256 of the certificate that signs Plume Custom. A build signed with another key could not update the TVs.
+      CERT_SHA256: 6f7698fa1f55e608e63c69bc4c72b9264b56754de142c2af9445a9c2b4937b38
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag matches versionName
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          [ "v$version" = "$TAG" ] || { echo "::error::Tag $TAG does not match versionName $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          [ -n "$KEYSTORE_BASE64" ] || { echo "::error::The KEYSTORE_BASE64 secret is not set"; exit 1; }
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          # keystore.properties reads a backslash as an escape, so double it.
+          esc() { printf '%s' "$1" | sed 's/\\/\\\\/g'; }
+          {
+            printf 'storeFile=%s\n' "$RUNNER_TEMP/release.jks"
+            printf 'storePassword=%s\n' "$(esc "$KEYSTORE_PASSWORD")"
+            printf 'keyAlias=%s\n' "$(esc "$KEY_ALIAS")"
+            printf 'keyPassword=%s\n' "$(esc "$KEY_PASSWORD")"
+          } > keystore.properties
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Unit tests and release build
+        run: ./gradlew testDebugUnitTest assembleRelease
+
+      - name: Check the signature
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          cp app/build/outputs/apk/release/app-release.apk Plume-Custom.apk
+          signer=$("$apksigner" verify --print-certs Plume-Custom.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          [ "$signer" = "$CERT_SHA256" ] || { echo "::error::The APK is signed with $signer, not the Plume Custom key"; exit 1; }
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v head="## $VERSION" '$0 == head { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1; }
+          gh release create "$TAG" Plume-Custom.apk --verify-tag --title "Plume Custom $TAG" --notes-file notes.md
+
+      - name: Remove the signing key
+        if: always()
+        run: rm -f keystore.properties "$RUNNER_TEMP/release.jks"

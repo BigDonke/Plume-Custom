@@ -10,26 +10,28 @@ Before installing, Plume checks three things:
 
 Android then accepts the update only if it is signed with the same key as the installed app.
 
-## Build
+## Release
+
+GitHub Actions builds and publishes every release (see `.github/workflows/release.yml`).
 
 1. Raise `versionCode` and set `versionName` in `app/build.gradle.kts`. Add a section for that version to `CHANGELOG.md`.
-2. Put `keystore.properties` in the repository root. It is git-ignored and holds `storeFile`, `storePassword`, `keyAlias` and `keyPassword`. Use the key that signed the APK on your TVs.
-3. Build the release.
+2. Commit and push to `main`.
+3. Push a tag that matches `versionName`.
 
    ```sh
-   ./gradlew assembleRelease
+   git tag v1.7.3
+   git push origin v1.7.3
    ```
 
+The workflow runs the unit tests and builds the release APK. It checks that the APK is signed with the Plume Custom key, then publishes it as `Plume-Custom.apk`. The release notes are that version's section of `CHANGELOG.md`.
+
+The signing key comes from four repository secrets: `KEYSTORE_BASE64` (the `.jks` file in base64), `KEYSTORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD`.
+
+## Local builds
+
+A release build reads the signing key from `keystore.properties` in the repository root. The file is git-ignored and holds `storeFile`, `storePassword`, `keyAlias` and `keyPassword`.
+
 Only a release build signed through `keystore.properties` checks for updates. Debug builds and release builds without the file skip the check, because an APK signed with another key could not update them. To check the releases of another repository, pass `-PplumeUpdateRepo=owner/name`.
-
-## Publish
-
-Create the release from `main` with a tag that matches `versionName`, and attach the APK as `Plume-Custom.apk`.
-
-```sh
-cp app/build/outputs/apk/release/app-release.apk Plume-Custom.apk
-gh release create v1.7.3 Plume-Custom.apk --title "Plume Custom v1.7.3" --notes "What changed"
-```
 
 The TVs see it on their next daily check, or right away under **Plume settings → Updates → Check for updates**. Drafts and pre-releases are never offered.
 
