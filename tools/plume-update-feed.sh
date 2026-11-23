@@ -12,8 +12,9 @@ printf '%s\n' "$expected_cert" | grep -Eq '^[0-9a-f]{64}$' || fail "Invalid sign
 
 feed=$1
 mkdir -p "$feed"
-staging=$feed/.publish-plume
-mkdir "$staging" || fail "Cannot open staging directory $staging"
+# Stage in a fresh temp directory, not in the feed: the feed is often the web root, and a run that is killed
+# must not leave anything there that blocks the next run.
+staging=$(mktemp -d "${TMPDIR:-/tmp}/plume-feed.XXXXXX") || fail "Cannot create a staging directory"
 trap 'rm -rf "$staging"' EXIT
 trap 'exit 1' HUP INT TERM
 
@@ -36,7 +37,13 @@ version=$(printf '%s\n' "$package_line" | cut -d "'" -f 6)
 printf '%s\n' "$code" | grep -Eq '^[1-9][0-9]{0,9}$' || fail "Invalid APK versionCode"
 [ "$code" -le 2100000000 ] || fail "APK versionCode exceeds 2100000000"
 
-sha256=$(shasum -a 256 "$apk" | cut -d ' ' -f 1)
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256=$(sha256sum "$apk" | cut -d ' ' -f 1)
+elif command -v shasum >/dev/null 2>&1; then
+    sha256=$(shasum -a 256 "$apk" | cut -d ' ' -f 1)
+else
+    sha256=$(openssl dgst -sha256 -r "$apk" | cut -d ' ' -f 1)
+fi
 printf '%s\n' "$sha256" | grep -Eq '^[0-9a-f]{64}$' || fail "Unable to hash APK"
 manifest=$staging/latest.properties
 printf 'versionCode=%s\nversionName=%s\nsha256=%s\n' "$code" "$version" "$sha256" > "$manifest"
@@ -54,9 +61,12 @@ asset=$feed/Plume-Custom-$code.apk
 if [ -f "$asset" ]; then
     cmp -s "$apk" "$asset" || fail "A different APK already exists for versionCode $code"
 else
-    chmod 644 "$apk"
-    mv "$apk" "$asset"
+    # Copy under a hidden name, then rename inside the feed, so the server never serves a partial file.
+    cp "$apk" "$feed/.Plume-Custom-$code.apk.tmp"
+    chmod 644 "$feed/.Plume-Custom-$code.apk.tmp"
+    mv "$feed/.Plume-Custom-$code.apk.tmp" "$asset"
 fi
-chmod 644 "$manifest"
-mv "$manifest" "$feed/latest.properties"
+cp "$manifest" "$feed/.latest.properties.tmp"
+chmod 644 "$feed/.latest.properties.tmp"
+mv "$feed/.latest.properties.tmp" "$feed/latest.properties"
 printf 'Prepared %s (%s) in %s\n' "$tag" "$code" "$feed"

@@ -59,7 +59,6 @@ android {
 
     // Release key lives outside the repo; keystore.properties (git-ignored) points at it. Without that file
     // (a fresh clone) release builds fall back to the debug key, so anyone can still build and sideload.
-    require(updateFeedUrl.isEmpty() || releaseProperties != null) { "Update-enabled builds require keystore.properties" }
     signingConfigs {
         if (releaseProperties != null) create("release") {
             storeFile = file(releaseProperties.getProperty("storeFile"))
@@ -96,6 +95,12 @@ android {
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
+}
+
+// Only a release build needs the key, so debug builds and unit tests still run with a feed URL set.
+val updatesWithoutKey = updateFeedUrl.isNotEmpty() && releaseProperties == null
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst { require(!updatesWithoutKey) { "Update-enabled builds require keystore.properties" } }
 }
 
 dependencies {

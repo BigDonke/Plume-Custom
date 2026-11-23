@@ -32,7 +32,7 @@ fi
 
 if [ -n "$perms$release_perms" ]; then
     echo "::error::New permission in a manifest. Discuss it in an issue first."
-    printf '%s\n' "$perms" "$release_perms"
+    printf '%s\n' "$perms" "$release_perms" | sed '/^$/d'
     echo "| No new permission | ❌ new permission |" >> "$summary"
     fail=1
 else

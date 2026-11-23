@@ -426,6 +426,7 @@ class MainActivity : Activity() {
             return
         }
         ready = true
+        if (updateFeedUrl.isNotEmpty()) updatePrefs // starts the background read; see updatePrefs
         setContentView(R.layout.activity_main)
         glass = GlassLayer(this)
         findViewById<ViewGroup>(R.id.root).addView(glass, 3, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -5629,40 +5630,53 @@ class MainActivity : Activity() {
     @Volatile private var checking = false
     @Volatile private var updating = false
     private val updateFeedUrl by lazy { getString(R.string.update_feed_url) }
+    // Asked for in onCreate, so Android reads the file in the background before onResume checks for updates.
     private val updatePrefs by lazy { getSharedPreferences("updates", MODE_PRIVATE) }
     @Suppress("DEPRECATION")
     private val installedVersionCode by lazy { packageManager.getPackageInfo(packageName, 0).versionCode }
 
     private fun myVersion() = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
 
-    private fun availableUpdate(): ReleaseUpdate? {
-        if (updateFeedUrl.isEmpty() || updatePrefs.getString("feed", null) != updateFeedUrl) return null
-        return updatePrefs.getString("manifest", null)?.let(ReleaseUpdate::parse)?.takeIf { it.isNewerThan(installedVersionCode) }
+    // The saved manifest, parsed once. Settings and the badge ask for it on every render.
+    private var storedUpdate: Lazy<ReleaseUpdate?> = lazy {
+        if (updatePrefs.getString("feed", null) != updateFeedUrl) null
+        else updatePrefs.getString("manifest", null)?.let(ReleaseUpdate::parse)
     }
+
+    private fun availableUpdate(): ReleaseUpdate? =
+        if (updateFeedUrl.isEmpty()) null else storedUpdate.value?.takeIf { it.isNewerThan(installedVersionCode) }
 
     private fun checkUpdate(force: Boolean) {
         if (updateFeedUrl.isEmpty() || checking) return
         val sameFeed = updatePrefs.getString("feed", null) == updateFeedUrl
-        if (!force && sameFeed && System.currentTimeMillis() - updatePrefs.getLong("checked_at", 0) < 24 * 3600_000L) return
+        if (!force && sameFeed && System.currentTimeMillis() < updatePrefs.getLong("next_check_at", 0)) return
         checking = true
         if (force) renderSettings(R.string.updates)
         io.execute {
             val manifest = try {
-                openStream(updateFeedUrl).bufferedReader().use { it.readText() }.also {
-                    if (ReleaseUpdate.parse(it) == null) throw IOException("invalid update manifest")
-                }
+                openStream(updateFeedUrl).bufferedReader().use { it.readText() }
             } catch (e: Exception) {
                 android.util.Log.w("Plume", "update check failed ($e)")
                 null
             }
+            val fetched = manifest?.let(ReleaseUpdate::parse)
+            if (manifest != null && fetched == null) android.util.Log.w("Plume", "update check failed (invalid update manifest)")
             ui.post {
                 if (isDestroyed) return@post
                 checking = false
-                val edit = updatePrefs.edit().putString("feed", updateFeedUrl).putLong("checked_at", System.currentTimeMillis())
-                if (!sameFeed) edit.remove("manifest").remove("notified_code")
-                if (manifest != null) edit.putString("manifest", manifest)
+                // A failed check (no Wi-Fi yet after the TV wakes, a captive portal) tries again in an hour, not a day.
+                val wait = if (fetched != null) 24 * 3600_000L else 3600_000L
+                val edit = updatePrefs.edit().putString("feed", updateFeedUrl).putLong("next_check_at", System.currentTimeMillis() + wait)
+                if (!sameFeed) {
+                    edit.remove("manifest").remove("notified_code")
+                    storedUpdate = lazyOf(null)
+                }
+                if (fetched != null) {
+                    edit.putString("manifest", manifest)
+                    storedUpdate = lazyOf(fetched)
+                }
                 edit.apply()
-                if (manifest != null) {
+                if (fetched != null) {
                     val update = availableUpdate()
                     if (update != null && updatePrefs.getInt("notified_code", 0) != update.versionCode) {
                         updatePrefs.edit().putInt("notified_code", update.versionCode).apply()
