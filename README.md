@@ -13,7 +13,7 @@ The original project supports many more TVs and has its own releases. This build
 - **Smaller settings panel.** It floats under the top bar with tighter rows and shows the wallpaper picture without waiting.
 - **TCL fixes.** The focused tile no longer jumps when the TV wakes.
 - **Nuvio mark.** Nuvio shows its own mark in place of a grey square.
-- **In-app updates.** A build with an update feed checks for new releases in **Plume settings → Updates**.
+- **In-app updates.** **Plume settings → Updates** installs new versions from this repository's releases.
 
 The app installs as `dev.plume.custom`, next to the official Plume, and shows up as **Plume Custom**.
 
@@ -62,7 +62,7 @@ The same grant lets Plume set its screensaver and turn the Home service on again
 ./gradlew assembleRelease
 ```
 
-The APK is written to `app/build/outputs/apk/release/`. Without `keystore.properties`, Gradle signs it with your local debug key. [Release delivery](docs/releases.md) covers signing and the update feed.
+The APK is written to `app/build/outputs/apk/release/`. Without `keystore.properties`, Gradle signs it with your local debug key. [Releases and updates](docs/releases.md) covers signing and publishing.
 
 ## Credits
 

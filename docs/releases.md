@@ -1,35 +1,36 @@
-# Plume Custom release delivery
+# Releases and updates
 
-GitHub Releases in [BigDonke/Plume-Custom](https://github.com/BigDonke/Plume-Custom/releases) are the source for TV updates. Serve the published APK and `latest.properties` from a static HTTPS directory that the TVs can reach without a browser sign-in.
+Plume Custom updates itself from the [GitHub releases](https://github.com/BigDonke/Plume-Custom/releases) of this repository. Once a day it asks the GitHub API for the latest release. If that release is newer, **Plume settings → Updates** offers to install its `Plume-Custom.apk`.
 
-## Build and sign
+Before installing, Plume checks three things:
 
-1. Increment `versionCode` and set the numeric `versionName` in `app/build.gradle.kts`. Add that version's section to `CHANGELOG.md`.
-2. Configure the git-ignored `keystore.properties` with `storeFile`, `storePassword`, `keyAlias`, and `keyPassword` for the key that signed the installed `dev.plume.custom` APK. Each TV can upgrade in place only with its existing signing certificate. Use `apksigner verify --print-certs` on a trusted copy of the installed APK to identify it.
-3. Add the manifest URL to the same `keystore.properties` file. Use a hostname so you can change the server IP through DNS without rebuilding the APK.
+- The APK matches the SHA-256 that GitHub shows for the release asset.
+- The APK has the package `dev.plume.custom` and the version from the release tag.
+- Its `versionCode` is higher than the installed one.
 
-   ```properties
-   plumeUpdateFeedUrl=https://updates.example.org/plume/latest.properties
-   ```
+Android then accepts the update only if it is signed with the same key as the installed app.
 
-4. Build the signed release.
+## Build
+
+1. Raise `versionCode` and set `versionName` in `app/build.gradle.kts`. Add a section for that version to `CHANGELOG.md`.
+2. Put `keystore.properties` in the repository root. It is git-ignored and holds `storeFile`, `storePassword`, `keyAlias` and `keyPassword`. Use the key that signed the APK on your TVs.
+3. Build the release.
 
    ```sh
    ./gradlew assembleRelease
    ```
 
-   Pass `-PplumeUpdateFeedUrl=<url>` to override the file for a staging or CI build. A release build with an empty feed URL shows the bundled release notes and skips update checks. Debug builds also skip update checks.
+Only a release build signed through `keystore.properties` checks for updates. Debug builds and release builds without the file skip the check, because an APK signed with another key could not update them. To check the releases of another repository, pass `-PplumeUpdateRepo=owner/name`.
 
 ## Publish
 
-1. Create a GitHub release from the corresponding `custom` revision. Use a tag that matches the APK version, such as `v1.7.2`, and attach `app/build/outputs/apk/release/app-release.apk` under the name `Plume-Custom.apk`. Publish it as the latest stable release once the APK is attached.
-2. Run the feed tool from a machine with authenticated GitHub CLI access to the fork, Java, and Android SDK Build Tools 36.0.0. Set `ANDROID_HOME` to the SDK path and `PLUME_UPDATE_CERT_SHA256` to the SHA-256 signing certificate digest of the installed APK. Use an output directory outside the Git checkout.
+Create the release from `main` with a tag that matches `versionName`, and attach the APK as `Plume-Custom.apk`.
 
-   ```sh
-   sh tools/plume-update-feed.sh /path/to/plume-feed
-   ```
+```sh
+cp app/build/outputs/apk/release/app-release.apk Plume-Custom.apk
+gh release create v1.7.3 Plume-Custom.apk --title "Plume Custom v1.7.3" --notes "What changed"
+```
 
-   The tool downloads the latest stable release and verifies the APK signature, package, and version. It writes `Plume-Custom-<versionCode>.apk` before updating `latest.properties`. Reuse the feed directory across releases so that it can reject version rollbacks and changes to an existing version's APK.
-3. If the output directory is separate from the web host, upload the new versioned APK first and replace `latest.properties` last. Keep old versioned APKs available for TVs that cached an earlier manifest. Configure a short cache lifetime for `latest.properties`.
+The TVs see it on their next daily check, or right away under **Plume settings → Updates → Check for updates**. Drafts and pre-releases are never offered.
 
-Install the first update-enabled build over the existing app with `adb install -r Plume-Custom.apk`. Publish a higher version to exercise **Plume settings → Updates** end to end. Android may prompt you to allow Plume to install apps and confirm the update.
+A TV running a build without the updater, or one signed with another key, needs one install by hand with `adb install -r Plume-Custom.apk`. A different signing key needs an uninstall first, which deletes the settings. Save them with **Settings backup** before.

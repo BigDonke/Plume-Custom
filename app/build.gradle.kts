@@ -1,4 +1,3 @@
-import java.net.URI
 import java.util.Properties
 
 plugins {
@@ -7,16 +6,10 @@ plugins {
 
 val releaseProperties = rootProject.file("keystore.properties").takeIf { it.exists() }
     ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
-val updateFeedUrl = providers.gradleProperty("plumeUpdateFeedUrl")
-    .orElse(releaseProperties?.getProperty("plumeUpdateFeedUrl").orEmpty())
-    .get()
-if (updateFeedUrl.isNotEmpty()) {
-    val feed = URI(updateFeedUrl)
-    require(feed.scheme == "https" && feed.host != null && feed.userInfo == null &&
-        feed.query == null && feed.fragment == null && feed.rawPath.endsWith("/latest.properties")) {
-        "plumeUpdateFeedUrl must be an HTTPS URL ending in /latest.properties"
-    }
-}
+// Release builds signed with keystore.properties check this repository's GitHub releases for updates. A build signed
+// with another key can't install those APKs, so it skips the check. -PplumeUpdateRepo=owner/name points it elsewhere.
+val updateRepo = if (releaseProperties == null) "" else providers.gradleProperty("plumeUpdateRepo").orElse("BigDonke/Plume-Custom").get()
+require(updateRepo.isEmpty() || Regex("[A-Za-z0-9-]+/[A-Za-z0-9._-]+").matches(updateRepo)) { "plumeUpdateRepo must look like owner/name" }
 
 // No dependencies on purpose: framework Views only, to keep RAM and APK size minimal.
 android {
@@ -32,7 +25,7 @@ android {
         versionCode = 11
         versionName = "1.7.2"
         testInstrumentationRunner = "dev.plume.ActivityTest"
-        resValue("string", "update_feed_url", "")
+        resValue("string", "update_repo", "")
         // What's new: only this version's section of CHANGELOG.md ships, one entry per line, ** marks kept for bold.
         // A ### heading ships as a line that starts with #.
         val changelog = rootProject.file("CHANGELOG.md").readText().replace("\r", "")
@@ -84,7 +77,7 @@ android {
             manifestPlaceholders["appLabel"] = "Plume Debug"
         }
         release {
-            resValue("string", "update_feed_url", updateFeedUrl)
+            resValue("string", "update_repo", updateRepo)
             vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true
@@ -92,12 +85,6 @@ android {
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
-}
-
-// Only a release build needs the key, so debug builds and unit tests still run with a feed URL set.
-val updatesWithoutKey = updateFeedUrl.isNotEmpty() && releaseProperties == null
-tasks.matching { it.name == "preReleaseBuild" }.configureEach {
-    doFirst { require(!updatesWithoutKey) { "Update-enabled builds require keystore.properties" } }
 }
 
 dependencies {

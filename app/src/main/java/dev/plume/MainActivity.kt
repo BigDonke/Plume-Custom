@@ -426,7 +426,7 @@ class MainActivity : Activity() {
             return
         }
         ready = true
-        if (updateFeedUrl.isNotEmpty()) updatePrefs // starts the background read; see updatePrefs
+        if (updateRepo.isNotEmpty()) updatePrefs // starts the background read; see updatePrefs
         setContentView(R.layout.activity_main)
         glass = GlassLayer(this)
         findViewById<ViewGroup>(R.id.root).addView(glass, 3, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -5621,7 +5621,7 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- updates (fork releases) ----------
+    // ---------- updates (GitHub releases of this build) ----------
     // Checked once a day from the home screen; a new version is announced once, then waits in settings.
     // The APK goes to a file in the cache, then into an install session. TVs without the confirm box open that file in
     // their own installer (see ApkProvider). The file is deleted when an update fails or is cancelled, and by the new
@@ -5629,7 +5629,8 @@ class MainActivity : Activity() {
 
     @Volatile private var checking = false
     @Volatile private var updating = false
-    private val updateFeedUrl by lazy { getString(R.string.update_feed_url) }
+    // Empty in debug builds and in release builds without keystore.properties, which skip update checks.
+    private val updateRepo by lazy { getString(R.string.update_repo) }
     // Asked for in onCreate, so Android reads the file in the background before onResume checks for updates.
     private val updatePrefs by lazy { getSharedPreferences("updates", MODE_PRIVATE) }
     @Suppress("DEPRECATION")
@@ -5637,49 +5638,57 @@ class MainActivity : Activity() {
 
     private fun myVersion() = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
 
-    // The saved manifest, parsed once. Settings and the badge ask for it on every render.
+    // The saved release, read once. Settings and the badge ask for it on every render.
     private var storedUpdate: Lazy<ReleaseUpdate?> = lazy {
-        if (updatePrefs.getString("feed", null) != updateFeedUrl) null
-        else updatePrefs.getString("manifest", null)?.let(ReleaseUpdate::parse)
+        if (updatePrefs.getString("repo", null) != updateRepo) null
+        else updatePrefs.getString("release", null)?.let { ReleaseUpdate.decode(updateRepo, it) }
     }
 
     private fun availableUpdate(): ReleaseUpdate? =
-        if (updateFeedUrl.isEmpty()) null else storedUpdate.value?.takeIf { it.isNewerThan(installedVersionCode) }
+        if (updateRepo.isEmpty()) null else storedUpdate.value?.takeIf { it.isNewerThan(myVersion()) }
+
+    /** The latest release and its Plume-Custom.apk. Drafts and pre-releases are never the latest. */
+    private fun fetchRelease(): ReleaseUpdate? {
+        val release = getJson("https://api.github.com/repos/$updateRepo/releases/latest")
+        val assets = release.getJSONArray("assets")
+        val apk = (0 until assets.length()).map(assets::getJSONObject)
+            .firstOrNull { it.optString("name") == ReleaseUpdate.APK_NAME && it.optString("state") == "uploaded" } ?: return null
+        return ReleaseUpdate.of(updateRepo, release.getString("tag_name"), apk.getString("browser_download_url"), apk.optString("digest"))
+    }
 
     private fun checkUpdate(force: Boolean) {
-        if (updateFeedUrl.isEmpty() || checking) return
-        val sameFeed = updatePrefs.getString("feed", null) == updateFeedUrl
-        if (!force && sameFeed && System.currentTimeMillis() < updatePrefs.getLong("next_check_at", 0)) return
+        if (updateRepo.isEmpty() || checking) return
+        val sameRepo = updatePrefs.getString("repo", null) == updateRepo
+        if (!force && sameRepo && System.currentTimeMillis() < updatePrefs.getLong("next_check_at", 0)) return
         checking = true
         if (force) renderSettings(R.string.updates)
         io.execute {
-            val manifest = try {
-                openStream(updateFeedUrl).bufferedReader().use { it.readText() }
+            val fetched = try {
+                fetchRelease() ?: throw IOException("the latest release has no usable ${ReleaseUpdate.APK_NAME}")
             } catch (e: Exception) {
                 android.util.Log.w("Plume", "update check failed ($e)")
                 null
             }
-            val fetched = manifest?.let(ReleaseUpdate::parse)
-            if (manifest != null && fetched == null) android.util.Log.w("Plume", "update check failed (invalid update manifest)")
             ui.post {
                 if (isDestroyed) return@post
                 checking = false
                 // A failed check (no Wi-Fi yet after the TV wakes, a captive portal) tries again in an hour, not a day.
                 val wait = if (fetched != null) 24 * 3600_000L else 3600_000L
-                val edit = updatePrefs.edit().putString("feed", updateFeedUrl).putLong("next_check_at", System.currentTimeMillis() + wait)
-                if (!sameFeed) {
-                    edit.remove("manifest").remove("notified_code")
+                val edit = updatePrefs.edit()
+                if (!sameRepo) {
+                    edit.clear() // also drops what an older updater saved
                     storedUpdate = lazyOf(null)
                 }
+                edit.putString("repo", updateRepo).putLong("next_check_at", System.currentTimeMillis() + wait)
                 if (fetched != null) {
-                    edit.putString("manifest", manifest)
+                    edit.putString("release", fetched.encode())
                     storedUpdate = lazyOf(fetched)
                 }
                 edit.apply()
                 if (fetched != null) {
                     val update = availableUpdate()
-                    if (update != null && updatePrefs.getInt("notified_code", 0) != update.versionCode) {
-                        updatePrefs.edit().putInt("notified_code", update.versionCode).apply()
+                    if (update != null && updatePrefs.getString("notified_version", null) != update.versionName) {
+                        updatePrefs.edit().putString("notified_version", update.versionName).apply()
                         if (!force) toast(getString(R.string.update_available_toast, update.versionName), long = true)
                     } else if (force && update == null) {
                         toast(getString(R.string.up_to_date_toast))
@@ -5761,7 +5770,7 @@ class MainActivity : Activity() {
         val update = availableUpdate()
         showPage(getString(R.string.whats_new_title, myVersion()), listOfNotNull(
             if (update != null) page(getString(R.string.install_update, update.versionName)) { installUpdate(update) }
-            else if (updateFeedUrl.isNotEmpty()) page(getString(R.string.check_updates)) { checkUpdate(force = true) } else null,
+            else if (updateRepo.isNotEmpty()) page(getString(R.string.check_updates)) { checkUpdate(force = true) } else null,
         ), back = { renderSettings(R.string.updates) })
         // Focusable, lit on focus, so Down walks through notes longer than the panel and it scrolls along.
         getString(R.string.whats_new).split('\n').forEach {
@@ -5831,12 +5840,13 @@ class MainActivity : Activity() {
         io.execute {
             val ok = try {
                 apk.delete()
-                openStream(update.apkUrl(updateFeedUrl)).use { input ->
+                openStream(update.apkUrl).use { input ->
                     apk.outputStream().use { input.copyTo(it) }
                 }
                 if (!apk.inputStream().use(update::matchesApk)) throw IOException("update checksum mismatch")
                 val candidate = packageManager.getPackageArchiveInfo(apk.path, 0)
-                if (candidate?.packageName != packageName || candidate.versionCode != update.versionCode) {
+                if (candidate?.packageName != packageName || candidate.versionName != update.versionName ||
+                    candidate.versionCode <= installedVersionCode) {
                     throw IOException("update package or version does not match the release")
                 }
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
