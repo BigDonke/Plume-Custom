@@ -25,10 +25,12 @@ class GalleryPreviewTest(private val runner: Instrumentation) {
         var home: Activity? = null
         var preview: Activity? = null
         var failure: String? = null
+        // The debug build installs as dev.plume.custom.debug; its classes keep the dev.plume namespace.
+        val dream = "${targetContext.packageName}/dev.plume.GalleryDream"
         try {
             prefs.edit().putBoolean("setup_shown", true).commit()
-            shell("settings put secure screensaver_components dev.plume/dev.plume.GalleryDream")
-            shell("pm grant dev.plume android.permission.READ_TV_LISTINGS")
+            shell("settings put secure screensaver_components $dream")
+            shell("pm grant ${targetContext.packageName} android.permission.READ_TV_LISTINGS")
             home = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             val launcher = home
             await { launcher.hasWindowFocus() }
@@ -51,7 +53,7 @@ class GalleryPreviewTest(private val runner: Instrumentation) {
                 await { shown.isFinishing && launcher.hasWindowFocus() }
                 waitForIdleSync()
                 if (it == 0) await { launcher.findViewById<View>(R.id.settingsScrim).isShown }
-                check(Settings.Secure.getString(targetContext.contentResolver, "screensaver_components") == "dev.plume/dev.plume.GalleryDream")
+                check(Settings.Secure.getString(targetContext.contentResolver, "screensaver_components") == dream)
                 check(secureKeys.associateWith { key -> Settings.Secure.getString(targetContext.contentResolver, key) } == settings)
                 check(Settings.System.getString(targetContext.contentResolver, "screen_off_timeout") == timeout)
             }

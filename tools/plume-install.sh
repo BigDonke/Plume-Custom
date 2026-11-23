@@ -36,8 +36,9 @@
 # Settings > System > Developer options > USB debugging or Network debugging. The first connection shows
 # "Allow USB debugging?" on the TV: tick "Always allow" and accept.
 
-PKG=dev.plume
-SERVICE=$PKG/$PKG.HomeOverride
+# Plume Custom installs as dev.plume.custom, but its classes keep the dev.plume namespace.
+PKG=dev.plume.custom
+SERVICE=$PKG/dev.plume.HomeOverride
 GRANT=android.permission.WRITE_SECURE_SETTINGS
 STATE=/data/local/tmp/plume-install.state
 FIRE_LAUNCHER=com.amazon.tv.launcher

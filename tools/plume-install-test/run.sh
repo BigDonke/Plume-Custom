@@ -16,7 +16,7 @@ PATH=$WORK/bin:$PATH
 FAKE_STATE=$WORK/tv.json
 export PATH FAKE_STATE
 STATE=/data/local/tmp/plume-install.state
-SVC=dev.plume/dev.plume.HomeOverride
+SVC=dev.plume.custom/dev.plume.HomeOverride
 OTHER=com.example/com.example.Other
 N=0 BAD=0
 
