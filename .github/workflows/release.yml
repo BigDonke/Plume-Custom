@@ -60,10 +60,13 @@ jobs:
 
       - name: Check the signature
         run: |
-          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          set -o pipefail
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          [ -x "$tools/apksigner" ] || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.0.0" > /dev/null
           cp app/build/outputs/apk/release/app-release.apk Plume-Custom.apk
-          signer=$("$apksigner" verify --print-certs Plume-Custom.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          [ "$signer" = "$CERT_SHA256" ] || { echo "::error::The APK is signed with $signer, not the Plume Custom key"; exit 1; }
+          certs=$("$tools/apksigner" verify --print-certs Plume-Custom.apk)
+          signer=$(printf '%s\n' "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          [ "$signer" = "$CERT_SHA256" ] || { printf '%s\n' "$certs"; echo "::error::The APK is not signed with the Plume Custom key"; exit 1; }
 
       - name: Publish the release
         env:
