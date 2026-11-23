@@ -34,12 +34,9 @@ android {
         testInstrumentationRunner = "dev.plume.ActivityTest"
         resValue("string", "update_feed_url", "")
         // What's new: only this version's section of CHANGELOG.md ships, one entry per line, ** marks kept for bold.
-        // A ### heading ships as a line that starts with #. A fix release (1.7.1) ships its x.y section after its own,
-        // so people who update from 1.6 still see what 1.7 brought.
+        // A ### heading ships as a line that starts with #.
         val changelog = rootProject.file("CHANGELOG.md").readText().replace("\r", "")
-        val section = { v: String -> changelog.substringAfter("\n## $v\n", "").substringBefore("\n## ") }
-        val minor = versionName!!.split('.').take(2).joinToString(".")
-        val notes = (section(versionName!!) + if (minor != versionName) "\n" + section(minor) else "")
+        val notes = changelog.substringAfter("\n## $versionName\n", "").substringBefore("\n## ")
             .lines().filter { it.startsWith("- ") || it.startsWith("### ") }
             .map { if (it.startsWith("### ")) "#" + it.removePrefix("### ") else it.removePrefix("- ") }
         require(notes.isNotEmpty()) { "CHANGELOG.md has no entries under \"## $versionName\"" }

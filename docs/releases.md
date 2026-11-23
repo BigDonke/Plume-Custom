@@ -1,6 +1,6 @@
 # Plume Custom release delivery
 
-GitHub Releases in [BigDonke/Plume-Custom](https://github.com/BigDonke/Plume-Custom/releases) are the source for TV updates. Keep the repository private and serve the published APK and `latest.properties` from a static HTTPS directory reachable by the TVs. To keep the files private too, restrict network access to the directory. The TV needs to reach it without a browser sign-in.
+GitHub Releases in [BigDonke/Plume-Custom](https://github.com/BigDonke/Plume-Custom/releases) are the source for TV updates. Serve the published APK and `latest.properties` from a static HTTPS directory that the TVs can reach without a browser sign-in.
 
 ## Build and sign
 

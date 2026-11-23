@@ -16,46 +16,20 @@ Put changes that are not released under `## Unreleased`. Rename that heading to 
 
 ## Unreleased
 
-- **Recent apps.** Press Home twice to open a row of app windows. Press Left or Right to switch apps. Press Back to return to Plume.
-- Hold OK on All apps, then select Recent apps. You can also assign Plume recent apps to a remote key.
-- Enable **App window previews** to show each app's last screen on Android 11 and later. Plume keeps them on the TV after a restart.
-- With no captured screen, a window shows the app's Continue Watching picture.
-- Hold OK on a window to remove it from the list, or select **Clear all**.
-- Choose a date or time format in **Clock & weather**. Select a preset or enter a custom format with a preview.
-- **Faster Home on Fire TV.** Plume uses an alarm to open sooner after you press Home. This needs the `WRITE_SECURE_SETTINGS` grant. Plume restores the previous alarm setting when you turn its Home button off.
-
-- Fire TV: Settings opened from Plume stays open on slow TVs. Before, Plume came back in front of it in under a second (#227).
-- Shows row: when you change sources, the source name, show titles, details and posters slide in the direction of the button you push. Cards keep their positions. The row has one title with dots that show which source is on screen.
-- **Custom app pictures.** Hold **OK** on an app, then select **Change picture**. Upload an icon or banner from your phone.
-- Press Right on the last app tile to select the first app tile.
-- **Mute action.** Assign **Mute** to a remote button to switch sound off and on.
-
-- **Settings backup.** Select **Backup** to save display and layout settings, then restore them on another TV.
-
-- **Screensaver timing.** Choose **Start after** in Plume to set the TV timeout or select **Never**.
-
-- **Screensaver preview.** Gallery, photos, and Aerial Views preview without the TV's system preview activity.
-
-- **Plume All apps.** Assign this action to a remote key to open Plume's app list.
-- Fire TVs with DroidLogic inputs play HDMI inside Plume instead of using Amazon's input switcher.
-- Plume opens when the Shield's Android TV home screen appears with the Home button service enabled.
-- Plume leaves the system launcher in front while Google TV suspends Plume in a kids profile.
-- Plume starts at cold boot when it is the only Home app. Before, the TV stayed on the boot screen.
-- On Xiaomi TVs, Home opens Plume when **Smooth volume** is on. Before, Home opened the Xiaomi home screen.
-- On Xiaomi TVs, **Remote & Home button** shows Off until the **Home button** is on. Before, it showed On, but Home opened the Xiaomi home screen.
-- On supported CVTE TVs, press **Source** or select **TV sources** to open the TV source panel.
-- Plume settings shows more rows by using less space for the wallpaper preview and help text.
-- **Wallpaper** opens at the top. Press Back in a submenu to return to the control you opened.
-- **Your shows** uses artwork that fills a 1080p wallpaper. Supported TVs show 4K when the image is large enough.
-- Add a TMDB key to find more show artwork. Select **Send key from phone** to scan a QR code.
-- Plume uses 1080p wallpapers on Hisense lushan TVs to prevent a black background.
-- Top icons use a smaller, lighter shadow over wallpapers.
-- Continue Watching shows Watch Next on Philips TVs with Android 12. Before, the row stayed empty (#265).
-- Nuvio has its own mark on the app row and in Continue Watching. Before, it showed a grey square.
-
 ## 1.7.2
 
-- **Plume Custom updates.** Select **Updates** to check for a new release and install it.
+- **Video wallpaper with clear glass.** The tiles and the settings panel show the moving video through clear glass.
+- **Smooth video.** The video wallpaper keeps an even frame rate while you move between apps. Its loop fades into its start.
+- **Continue Watching per app.** Each app has its own row. Press Up or Down to change the row at once.
+- **Updates.** Select **Updates** to check the GitHub releases of Plume Custom and install a new version.
+- **Round tiles.** App tiles with a mark are circles. Each top bar icon sits on a glass disc.
+- **Smaller settings panel.** The panel sits under the top bar and has shorter rows. The wallpaper picture shows at once.
+- The video wallpaper no longer looks washed out.
+- The selected tile no longer jumps when the TV wakes.
+- The row title shows the app's mark, not each card.
+- Nuvio has its own mark on the app row and in Continue Watching. Before, it showed a grey square.
+- The screen no longer flashes when you press Home.
+- The wallpaper list keeps its position.
 
 ## 1.7.1
 

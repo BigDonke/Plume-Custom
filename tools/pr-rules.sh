@@ -1,5 +1,5 @@
 #!/bin/sh
-# pr-rules.sh BASE: checks a pull request against the rules in CONTRIBUTING, from the git diff BASE...HEAD.
+# pr-rules.sh BASE: checks a pull request against this repository's rules, from the git diff BASE...HEAD.
 # Fails on new libraries and unapproved permissions. The fork's updater uses a release-only install permission.
 # Warns on a missing CHANGELOG entry. Writes a table to $GITHUB_STEP_SUMMARY when it is set.
 base=${1:?usage: pr-rules.sh BASE}

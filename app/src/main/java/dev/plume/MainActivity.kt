@@ -7075,7 +7075,7 @@ class MainActivity : Activity() {
         const val RIM_SIDE_LIT = 0x17FFFFFF
         const val PANEL_EDGE = 0x0FFFFFFF // white 6%, the settings panel's rim
         const val PANEL_CORNER = 24 // dp, the settings panel's corners
-        const val HELP_URL = "https://github.com/aradhyas8/Plume_Launcher#home-button-on-android-13-and-newer"
+        const val HELP_URL = "https://github.com/BigDonke/Plume-Custom#android-13-and-newer"
         const val TOGGLE_ON = "\u0000on" // row values drawn as a switch instead of text
         const val TOGGLE_OFF = "\u0000off"
         const val BANNER_DIM = 0.3f // black laid over a colour banner at rest, so the selected one stands out

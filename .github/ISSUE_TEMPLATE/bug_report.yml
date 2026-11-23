@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please check [Troubleshooting](https://github.com/aradhyas8/Plume_Launcher#troubleshooting) first. Many Home button problems are solved there.
+        Please check [Troubleshooting](https://github.com/BigDonke/Plume-Custom#troubleshooting) first. Many Home button problems are solved there.
   - type: input
     id: device
     attributes:

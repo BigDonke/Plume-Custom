@@ -23,7 +23,7 @@
 #                  the TV says the service is running
 #   Fire TV        Android 9 to 11 (Fire OS 7 and 8): a Plume with the alarm change sets the alarm timing
 #                  (min_futurity) by itself when its service starts. The script looks whether it did. A Plume
-#                  without that change leaves it, and Home then takes about 5 seconds. See CONTRIBUTING.md, "alarms".
+#                  without that change leaves it, and Home then takes about 5 seconds. See HomeAlarm.
 #   Fire TV, --disable-stock-launcher: the script first writes a recovery record on the TV, turns the launcher
 #                  off, checks that Plume's service runs and that Home opens Plume, and turns the launcher on
 #                  again if either check fails.
